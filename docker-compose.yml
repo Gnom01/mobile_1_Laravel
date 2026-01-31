@@ -104,4 +104,8 @@ volumes:
 
 networks:
   app-network:
+<<<<<<< Updated upstream
     driver: bridge
+=======
+    driver: bridge
+>>>>>>> Stashed changes
