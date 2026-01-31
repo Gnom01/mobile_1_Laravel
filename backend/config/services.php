@@ -35,4 +35,13 @@ return [
         ],
     ],
 
+    'crm' => [
+    'base_url' => env('CRM_BASE_URL'),
+    'login_endpoint' => env('CRM_LOGIN_ENDPOINT', '/auth/login'),
+    'refresh_endpoint' => env('CRM_REFRESH_ENDPOINT', '/auth/refresh'),
+    'username' => env('CRM_USERNAME'),
+    'password' => env('CRM_PASSWORD'),
+],
+
+
 ];
