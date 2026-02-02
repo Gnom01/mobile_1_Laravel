@@ -34,12 +34,8 @@ services:
     working_dir: /var/www/html
     volumes:
       - ./backend:/var/www/html
-    environment:
-      CRM_BASE_URL: "https://web-aden-eds-web-pre.azurewebsites.net/API"
-      CRM_LOGIN_ENDPOINT: "/Users/login"
-      CRM_REFRESH_ENDPOINT: "/Users/login"
-      CRM_USERNAME: "strozik@aden.pl"
-      CRM_PASSWORD: "Stest123Eds"
+    env_file:
+      - ./.env.docker
     depends_on:
       mysql:
         condition: service_healthy
@@ -75,12 +71,8 @@ services:
     command: php artisan queue:work --tries=3 --timeout=120 --sleep=3
     volumes:
       - ./backend:/var/www/html
-    environment:
-      CRM_BASE_URL: "https://web-aden-eds-web-pre.azurewebsites.net/API"
-      CRM_LOGIN_ENDPOINT: "/Users/login"
-      CRM_REFRESH_ENDPOINT: "/Users/login"
-      CRM_USERNAME: "strozik@aden.pl"
-      CRM_PASSWORD: "Stest123Eds"
+    env_file:
+      - ./.env.docker
     depends_on:
       - mysql
       - php
@@ -101,12 +93,8 @@ services:
     command: php artisan schedule:work --verbose --no-interaction
     volumes:
       - ./backend:/var/www/html
-    environment:
-      CRM_BASE_URL: "https://web-aden-eds-web-pre.azurewebsites.net/API"
-      CRM_LOGIN_ENDPOINT: "/Users/login"
-      CRM_REFRESH_ENDPOINT: "/Users/login"
-      CRM_USERNAME: "strozik@aden.pl"
-      CRM_PASSWORD: "Stest123Eds"
+    env_file:
+      - ./.env.docker
     depends_on:
       - mysql
       - php
