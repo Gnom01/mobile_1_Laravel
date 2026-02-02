@@ -22,3 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+.env.docker
+backend/.env
+docker-compose.override.yml
+deploy.log
