@@ -31,7 +31,7 @@ class PullUsersJob implements ShouldQueue
         $resp = $crm->post('/Users/getPage', [
             'updatedSince' => $since,
             'limit' => 500,
-             'page' => 1,
+            'page' => 1,
             'order' => 'WhenUpdated ASC', 
             'current_LocalizationsID' => "0",
         ])->json();
