@@ -1,15 +1,30 @@
-- name: Deploy via SSH
-  uses: appleboy/ssh-action@v1.0.3
-  with:
-    host: ${{ secrets.SSH_HOST }}
-    username: ${{ secrets.SSH_USER }}
-    port: ${{ secrets.SSH_PORT }}
-    key: ${{ secrets.SSH_PRIVATE_KEY }}
-    debug: true
-    script: |
-      whoami
-      hostname
-      cd "${{ secrets.DEPLOY_PATH }}"
-      git fetch origin
-      git reset --hard origin/dev
-      docker compose up -d --build
+name: Deploy (dev)
+
+on:
+  push:
+    branches: [ "dev" ]
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          debug: true
+          script: |
+            set -e
+            whoami
+            hostname
+            cd "${{ secrets.DEPLOY_PATH }}"
+            git fetch origin
+            git reset --hard origin/dev
+            docker compose up -d --build
