@@ -1,0 +1,41 @@
+name: Deploy (dev)
+
+on:
+  push:
+    branches: [ "dev" ]
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            echo "== Update code =="
+            git fetch origin
+            git reset --hard origin/dev
+
+            echo "== Restart containers =="
+            docker compose down
+            docker compose up -d --build
+
+            echo "== Laravel post-deploy =="
+            docker compose exec -T php php artisan migrate --force || true
+            docker compose exec -T php php artisan config:cache || true
+            docker compose exec -T php php artisan route:cache || true
+            docker compose exec -T php php artisan view:cache || true
+
+            echo "== Done =="
