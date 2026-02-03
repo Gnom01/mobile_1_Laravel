@@ -28,3 +28,5 @@ jobs:
             git fetch origin
             git reset --hard origin/dev
             docker compose up -d --build
+            docker compose exec -T php composer install --no-dev --optimize-autoloader
+            docker compose restart queue scheduler
