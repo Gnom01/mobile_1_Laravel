@@ -17,6 +17,7 @@ class CrmAuthService
 
             // token ważny jeszcze > 60s => użyj
             if ($token && $token->expires_at && $token->expires_at->gt(now()->addSeconds(60))) {
+                // fdgdf
                 return $token->access_token;
             }
 
