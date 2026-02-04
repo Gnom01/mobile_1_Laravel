@@ -1,14 +1,27 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-
-
-
+use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\CrmUserController;
 
-Route::get('/clients', [ClientController::class, 'index']);
-Route::put('/clients/{id}', [ClientController::class, 'update']);
+// ───────────────────────────────────────────────
+// Public routes (no authentication required)
+// ───────────────────────────────────────────────
+Route::post('/login', [AuthController::class, 'login']);
 
-Route::get('/users', [CrmUserController::class, 'index']);
-Route::put('/users/{id}', [CrmUserController::class, 'update']);
+// ───────────────────────────────────────────────
+// Protected routes (require authentication token)
+// ───────────────────────────────────────────────
+Route::middleware('auth:sanctum')->group(function () {
+    // Authentication
+    Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Clients
+    Route::get('/clients', [ClientController::class, 'index']);
+    Route::put('/clients/{id}', [ClientController::class, 'update']);
+
+    // Users
+    Route::get('/users', [CrmUserController::class, 'index']);
+    Route::put('/users/{id}', [CrmUserController::class, 'update']);
+});
