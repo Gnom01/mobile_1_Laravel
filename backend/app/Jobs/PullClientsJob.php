@@ -35,7 +35,7 @@ class PullClientsJob implements ShouldQueue
         $totalProcessed = 0;
 
         do {
-            \Illuminate\Support\Facades\Log::info("PullClientsJob: fetching page {$page} from /Clients/getPage since [{$since}]...");
+            // \Illuminate\Support\Facades\Log::info("PullClientsJob: fetching page {$page} from /Clients/getPage since [{$since}]...");
 
             $resp = $crm->post('/Clients/getPage', [
                 'updatedSince' => $since,
@@ -48,7 +48,7 @@ class PullClientsJob implements ShouldQueue
             $items = $resp['body'] ?? $resp ?? [];
             $itemCount = is_array($items) ? count($items) : 0;
             
-            \Illuminate\Support\Facades\Log::info("PullClientsJob: page {$page} fetched {$itemCount} items.");
+            // \Illuminate\Support\Facades\Log::info("PullClientsJob: page {$page} fetched {$itemCount} items.");
 
             foreach ($items as $r) {
                 if (!is_array($r)) continue;
