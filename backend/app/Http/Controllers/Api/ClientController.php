@@ -46,6 +46,7 @@ class ClientController extends Controller
 
         $client->fill($data);
         $client->WhenUpdated = now();
+        
         $client->save();
 
         \App\Models\OutboxEvent::create([
