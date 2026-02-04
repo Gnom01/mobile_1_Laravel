@@ -37,9 +37,9 @@ class PullUsersJob implements ShouldQueue
         do {
             \Illuminate\Support\Facades\Log::info("PullUsersJob: fetching page {$page} since [{$since}]...");
             
-            $resp = $crm->post('/Users/getPage', [
+            $resp = $crm->post('/Users/getUsersSynchMobile', [
                 'updatedSince' => $since,
-                'limit' => $limit,
+                'pageSize' => $limit,
                 'page' => $page,
                 'order' => 'WhenUpdated ASC', 
                 'current_LocalizationsID' => "0",
