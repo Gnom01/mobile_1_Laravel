@@ -13,7 +13,7 @@ class CrmUser extends Authenticatable
     protected $primaryKey = 'UsersID';
     public $timestamps = false;
     protected $guarded = [];
-    protected $hidden = ['Password'];
+    protected $hidden = [];
     protected $casts = [
         'WhenInserted' => 'datetime',
         'WhenUpdated' => 'datetime',

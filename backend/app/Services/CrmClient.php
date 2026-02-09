@@ -38,7 +38,7 @@ class CrmClient
             ->timeout(20);
 
         $fullUrl = config('services.crm.base_url') . $url;
-        \Illuminate\Support\Facades\Log::info("CrmClient: {$method} {$fullUrl}", ['payload' => $payload]);
+        // \Illuminate\Support\Facades\Log::info("CrmClient: {$method} {$fullUrl}", ['payload' => $payload]);
 
         $resp = $http->{$method}($url, $payload);
 

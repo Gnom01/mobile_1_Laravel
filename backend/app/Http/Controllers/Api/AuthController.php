@@ -23,13 +23,23 @@ class AuthController
         $email = $request->input('Email');
         $password = $request->input('Password');
 
-        $user = CrmUser::where('Email', $email)->first();
+        $user = CrmUser::where('login', $email)->first();
 
-        if (!$user || !Hash::check($password, $user->Password)) {
+        // Match CRM's authentication logic: try password_verify first, then plaintext comparison
+        if (!$user || !(Hash::check($password, $user->Password) || $user->Password === $password)) {
+            \Illuminate\Support\Facades\Log::warning('Login failed', [
+                'email' => $email,
+                'user_exists' => (bool) $user,
+            ]);
             throw ValidationException::withMessages([
                 'Email' => ['The provided credentials are incorrect.'],
             ]);
         }
+
+        \Illuminate\Support\Facades\Log::info('Login successful', [
+            'email' => $email,
+            'user_id' => $user->UsersID,
+        ]);
 
         // Usuń poprzednie tokeny (opcjonalnie)
         $user->tokens()->delete();
@@ -45,6 +55,7 @@ class AuthController
                 'email' => $user->Email,
                 'first_name' => $user->FirstName,
                 'last_name' => $user->LastName,
+                'role' => 2,
             ],
         ]);
     }
