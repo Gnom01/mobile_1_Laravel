@@ -24,10 +24,21 @@ class PullClientsJob implements ShouldQueue
     {
         $state = \App\Models\SyncState::firstOrCreate(
             ['resource' => 'clients'],
-            ['last_sync_at' => now()->subYears(5)]
+            ['last_sync_at' => now()->subYears(5), 'is_full_synced' => false]
         );
 
-        $since = $state->last_sync_at ? $state->last_sync_at->format('Y-m-d H:i:s') : null;
+        // Jesli nie jest w pelni zsynchronizowany, startujemy od zera (full sync)
+        // W przeciwnym razie robimy delte z bezpiecznym marginesem (minus 1 sekunda)
+        if (!$state->is_full_synced) {
+            $since = null;
+            $state->full_sync_started_at = now();
+            $state->save();
+        } else {
+            // Bezpieczny wzorzec: cofamy since o 1 sekunde, aby nie pominac rekordow o tej samej dacie
+            $since = $state->last_sync_at 
+                ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s') 
+                : null;
+        }
 
         $page = 1;
         $limit = 500;
@@ -35,8 +46,6 @@ class PullClientsJob implements ShouldQueue
         $totalProcessed = 0;
 
         do {
-            // \Illuminate\Support\Facades\Log::info("PullClientsJob: fetching page {$page} from /Clients/getPage since [{$since}]...");
-
             $resp = $crm->post('/Clients/getPage', [
                 'updatedSince' => $since,
                 'limit' => $limit,
@@ -48,18 +57,19 @@ class PullClientsJob implements ShouldQueue
             $items = $resp['body'] ?? $resp ?? [];
             $itemCount = is_array($items) ? count($items) : 0;
             
-            // \Illuminate\Support\Facades\Log::info("PullClientsJob: page {$page} fetched {$itemCount} items.");
-
             foreach ($items as $r) {
                 if (!is_array($r)) continue;
 
-                // Mapowanie daty do kursora (klucze z małej litery w JSON)
-                if (isset($r['whenUpdated']) && (!$maxDate || $r['whenUpdated'] > $maxDate)) {
+                $clientsID = (int)($r['clientsID'] ?? 0);
+                $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', now());
+
+                // Mapowanie daty do kursora
+                if ($r['whenUpdated'] && (!$maxDate || $r['whenUpdated'] > $maxDate)) {
                     $maxDate = $r['whenUpdated'];
                 }
 
                 \App\Models\Client::updateOrCreate(
-                    ['ClientsID' => (int)($r['clientsID'] ?? 0)], 
+                    ['ClientsID' => $clientsID], 
                     [
                         'Parent_ClientsID' => (int)($r['parent_ClientsID'] ?? 0),
                         'GUID' => (string)($r['guid'] ?? ''),
@@ -75,12 +85,12 @@ class PullClientsJob implements ShouldQueue
                         'Logo' => (string)($r['logo'] ?? ''),
                         'URL' => (string)($r['url'] ?? ''),
                         'EMAIL' => (string)($r['email'] ?? ''),
-                        'TransferID' => 0, // brak w JSON
+                        'TransferID' => 0,
                         'Cancelled' => (int)($r['cancelled'] ?? 0),
                         'Admin' => (int)($r['admin'] ?? 0),
                         'WhenInserted' => $this->validateDate($r['whenInserted'] ?? '', now()),
                         'WhoInserted_UsersID' => (int)($r['whoInserted_UsersID'] ?? 0),
-                        'WhenUpdated' => $this->validateDate($r['whenUpdated'] ?? '', now()),
+                        'WhenUpdated' => $whenUpdated,
                         'WhoUpdated_UsersID' => (int)($r['whoUpdated_UsersID'] ?? 0),
                         'Regon' => (string)($r['regon'] ?? ''),
                         'ContractHeader' => (string)($r['contractHeader'] ?? ''),
@@ -96,22 +106,20 @@ class PullClientsJob implements ShouldQueue
 
             $page++;
             
-            // Jeśli dostaliśmy mniej niż limit, to była ostatnia strona
         } while ($itemCount >= $limit);
 
         \Illuminate\Support\Facades\Log::info("PullClientsJob: completed. Total processed: {$totalProcessed}");
 
-        // Jeśli pobraliśmy dane, przesuwamy kursor na datę OSTATNIEGO rekordu (bo sortujemy ASC)
-        // Jeśli nie pobraliśmy nic => jesteśmy na bieżąco (opcjonalnie można dać now())
         if ($maxDate) {
             $state->last_sync_at = \Carbon\Carbon::parse($maxDate);
-            $state->save();
-        } elseif (!$state->last_sync_at) {
-             // Jeśli nigdy nie było synchro i przyszło 0, to ustaw np. today? 
-             // Albo zostaw null, żeby próbował od początku wieków przy następnym razie
-             $state->last_sync_at = now();
-             $state->save();
         }
+
+        if (!$state->is_full_synced) {
+            $state->is_full_synced = true;
+            $state->full_sync_completed_at = now();
+        }
+
+        $state->save();
     }
 
     private function validateDate($date, $default = null)
