@@ -27,11 +27,21 @@ class PullUsersJob implements ShouldQueue
         
         $state = \App\Models\SyncState::firstOrCreate(
             ['resource' => 'users'],
-            ['last_sync_at' => now()->subYears(5)]
+            ['last_sync_at' => now()->subYears(5), 'is_full_synced' => false]
         );
 
-        $since = $state->last_sync_at ? $state->last_sync_at->format('Y-m-d H:i:s') : null;
-        
+        // Jesli nie jest w pelni zsynchronizowany, startujemy od zera (full sync)
+        if (!$state->is_full_synced) {
+            $since = null;
+            $state->full_sync_started_at = now();
+            $state->save();
+        } else {
+            // Bezpieczny wzorzec: cofamy since o 1 sekunde
+            $since = $state->last_sync_at 
+                ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s') 
+                : null;
+        }
+
         $page = 1;
         $limit = 100;  
         $maxDate = null;
@@ -55,12 +65,15 @@ class PullUsersJob implements ShouldQueue
                 
                 if (!is_array($r)) continue;
                 
+                $usersID = (int)($r['usersID'] ?? 0);
+                $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', now());
+
                 if (isset($r['whenUpdated']) && (!$maxDate || $r['whenUpdated'] > $maxDate)) {
                     $maxDate = $r['whenUpdated'];
                 }
                 
                 \App\Models\CrmUser::updateOrCreate(
-                    ['UsersID' => (int)($r['usersID'] ?? 0)],
+                    ['UsersID' => $usersID],
                     [
                         'LastName' => (string)($r['lastName'] ?? ''),
                         'FirstName' => (string)($r['firstName'] ?? ''),
@@ -87,7 +100,7 @@ class PullUsersJob implements ShouldQueue
                         'Cancelled' => (int)($r['cancelled'] ?? 0),
                         'WhenInserted' => $this->validateDate($r['whenInserted'] ?? '', now()),
                         'WhoInserted_UsersID' => (int)($r['whoInserted_UsersID'] ?? 0),
-                        'WhenUpdated' => $this->validateDate($r['whenUpdated'] ?? '', now()),
+                        'WhenUpdated' => $whenUpdated,
                         'WhoUpdated_UsersID' => (int)($r['whoUpdated_UsersID'] ?? 0),
                         'Default_LocalizationsID' => (int)($r['default_LocalizationsID'] ?? 0),
                         'DateOfBirdth' => $this->validateDate($r['dateOfBirdth'] ?? '', null),
@@ -111,18 +124,20 @@ class PullUsersJob implements ShouldQueue
 
             $page++;
             
-            // Jeśli dostaliśmy mniej niż limit, to była ostatnia strona
         } while ($itemCount >= $limit);
 
         \Illuminate\Support\Facades\Log::info("PullUsersJob: completed. Total processed: {$totalProcessed}");
 
         if ($maxDate) {
             $state->last_sync_at = \Carbon\Carbon::parse($maxDate);
-            $state->save();
-        } elseif (!$state->last_sync_at) {
-             $state->last_sync_at = now();
-             $state->save();
         }
+
+        if (!$state->is_full_synced) {
+            $state->is_full_synced = true;
+            $state->full_sync_completed_at = now();
+        }
+
+        $state->save();
     }
 
     private function validateDate($date, $default = null)
