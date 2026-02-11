@@ -2,7 +2,7 @@ name: Deploy (dev)
 
 on:
   push:
-    branches: [ "dev" ]
+    branches: ["dev"]
 
 concurrency:
   group: deploy-dev
@@ -21,12 +21,30 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           debug: true
           script: |
-            set -e
+            set -euo pipefail
+
             whoami
+            id
             hostname
+
             cd "${{ secrets.DEPLOY_PATH }}"
+            pwd
+            git rev-parse --is-inside-work-tree
+
+            # 1) Zatrzymaj kontenery przed git reset (to usuwa "blokady" na plikach)
+            docker compose down || true
+
+            # 2) Upewnij się, że nie zostały locki po poprzednim deployu
+            rm -f .git/index.lock .git/HEAD.lock .git/shallow.lock 2>/dev/null || true
+
+            # 3) Aktualizacja kodu
             git fetch origin
             git reset --hard origin/dev
+            git clean -fd
+
+            # 4) Start + build
             docker compose up -d --build
+
+            # 5) Composer + restart workerów
             docker compose exec -T php composer install --no-dev --optimize-autoloader
             docker compose restart queue scheduler
