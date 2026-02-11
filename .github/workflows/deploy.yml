@@ -23,46 +23,43 @@ jobs:
           script: |
             set -euo pipefail
 
-            # Przejdź do folderu projektu
             cd "${{ secrets.DEPLOY_PATH }}"
 
-            # 1. Naprawa uprawnień przed operacjami Git
-            # Docker mógł utworzyć pliki jako root, co blokuje 'git reset'
-            sudo chown -R $USER:$USER .
-
-            # 2. Zatrzymaj kontenery
-            # Robimy to przed resetem, aby zwolnić blokady plików (file locks)
+            # 1) Stop containers (avoid locks)
             docker compose down || true
 
-            # 3. Aktualizacja kodu
+            # 2) HARD FIX: clean Laravel runtime dirs so git reset can't fail on unlink
+            # If you store uploads locally in backend/storage/app, see the safe variant below.
+            rm -rf backend/storage backend/bootstrap/cache || true
+            mkdir -p backend/storage backend/bootstrap/cache
+            chmod -R u+rwX,g+rwX backend/storage backend/bootstrap/cache || true
+
+            # 3) Update code
             git fetch origin
             git reset --hard origin/dev
             git clean -fd
 
-            # 4. Przygotowanie pliku .env
+            # 4) Ensure Laravel .env exists and APP_KEY line is valid
             if [ -f backend/.env.docker ] && [ ! -f backend/.env ]; then
               cp -f backend/.env.docker backend/.env
             fi
-            
-            # Naprawa ewentualnych błędów w strukturze .env
+
+            # Fix case where someone had "APP_KEY" without "="
             sed -i 's/^APP_KEY$/APP_KEY=/' backend/.env || true
+            # Ensure APP_KEY exists at all
             grep -q '^APP_KEY=' backend/.env || echo 'APP_KEY=' >> backend/.env
 
-            # 5. Budowanie i uruchamianie obrazów
+            # 5) Build & start
             docker compose up -d --build
 
-            # 6. Instalacja zależności PHP (wewnątrz kontenera)
+            # 6) Install deps (inside container)
             docker compose exec -T php composer install --no-dev --optimize-autoloader
 
-            # 7. Generowanie klucza aplikacji (tylko jeśli go nie ma)
+            # 7) Generate key only if empty (keeps stable key across deploys)
             docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
-            # 8. Opcjonalne: Migracje bazy danych
+            # 8) Optional: migrations (uncomment if you want automatic migrations)
             # docker compose exec -T php php artisan migrate --force
 
-            # 9. Przywrócenie uprawnień dla serwera WWW wewnątrz kontenera
-            # Ważne, aby Laravel mógł pisać logi i cache
-            docker compose exec -T php chown -R www-data:www-data storage bootstrap/cache
-
-            # 10. Restart workerów
+            # 9) Restart workers
             docker compose restart queue scheduler
