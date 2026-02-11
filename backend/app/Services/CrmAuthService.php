@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\CrmToken;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class CrmAuthService
 {
@@ -17,17 +18,19 @@ class CrmAuthService
 
             // token ważny jeszcze > 60s => użyj
             if ($token && $token->expires_at && $token->expires_at->gt(now()->addSeconds(60))) {
-                // fdgdf
+                Log::info('CRM Auth: Using existing valid token. Expires at: ' . $token->expires_at);
                 return $token->access_token;
             }
 
             // jeśli jest refresh_token => spróbuj refresh
             if ($token && $token->refresh_token) {
+                Log::info('CRM Auth: Attempting token refresh.');
                 $new = $this->refresh($token->refresh_token);
                 if ($new) return $new;
             }
 
             // fallback => login
+            Log::info('CRM Auth: Falling back to full login.');
             return $this->login();
         });
     }
@@ -41,13 +44,22 @@ class CrmAuthService
 
     private function login(): string
     {
-        $resp = $this->http()
-            ->post(config('services.crm.login_endpoint'), [
-                'email' => config('services.crm.username'),
-                'password' => config('services.crm.password'),
-            ])
-            ->throw()
-            ->json();
+        Log::info('CRM Auth: Starting login attempt for ' . config('services.crm.username'));
+
+        try {
+            $resp = $this->http()
+                ->post(config('services.crm.login_endpoint'), [
+                    'email' => config('services.crm.username'),
+                    'password' => config('services.crm.password'),
+                ])
+                ->throw()
+                ->json();
+            
+            Log::info('CRM Auth: Login request successful.');
+        } catch (\Throwable $e) {
+            Log::error('CRM Auth: Login request failed: ' . $e->getMessage());
+            throw $e;
+        }
 
         // DOPASUJ te klucze do odpowiedzi Twojego CRM
         $access = $resp['access_token'] ?? $resp['token'] ?? null;
@@ -55,8 +67,11 @@ class CrmAuthService
         $expiresIn = (int)($resp['expires_in'] ?? 3600);
 
         if (!$access) {
+            Log::error('CRM Auth: Login failed - missing access_token in response.', ['response' => $resp]);
             throw new \RuntimeException('CRM login: missing access_token/token');
         }
+
+        Log::info('CRM Auth: Login successful, token stored. Expires in: ' . $expiresIn . 's');
 
         CrmToken::query()->delete(); // trzymamy 1 rekord
         CrmToken::create([
@@ -82,7 +97,12 @@ class CrmAuthService
             $refresh = $resp['refresh_token'] ?? $refreshToken;
             $expiresIn = (int)($resp['expires_in'] ?? 3600);
 
-            if (!$access) return null;
+            if (!$access) {
+                Log::warning('CRM Auth: Refresh failed - no access token in response.');
+                return null;
+            }
+
+            Log::info('CRM Auth: Refresh successful.');
 
             CrmToken::query()->delete();
             CrmToken::create([
@@ -93,6 +113,7 @@ class CrmAuthService
 
             return $access;
         } catch (\Throwable $e) {
+            Log::error('CRM Auth: Refresh exception: ' . $e->getMessage());
             return null;
         }
     }
