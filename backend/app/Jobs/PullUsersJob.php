@@ -20,7 +20,9 @@ class PullUsersJob implements ShouldQueue
     /**
      * Execute the job.
      */
-    public function handle(\App\Services\CrmClient $crm)
+    public $timeout = 3600; // 1 hour for large sync
+
+    public function handle(\App\Services\CrmAuthService $auth, \App\Services\CrmClient $crm)
     {
         // Increase memory limit to prevent exhaustion
         ini_set('memory_limit', '512M');
@@ -31,20 +33,19 @@ class PullUsersJob implements ShouldQueue
         );
 
         // Jesli nie jest w pelni zsynchronizowany, startujemy od zera (full sync)
-        if (!$state->is_full_synced) {
+        if (!$state->is_full_synced && !$state->full_sync_started_at) {
             $since = null;
             $state->full_sync_started_at = now();
             $state->save();
         } else {
-            // Bezpieczny wzorzec: cofamy since o 1 sekunde
+            // Kontynuujemy od ostatniej zapisanej daty
             $since = $state->last_sync_at 
-                ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s') 
+                ? $state->last_sync_at->format('Y-m-d H:i:s') 
                 : null;
         }
 
         $page = 1;
         $limit = 100;  
-        $maxDate = null;
         $totalProcessed = 0;
 
         do {
@@ -54,22 +55,28 @@ class PullUsersJob implements ShouldQueue
                 'page' => $page,
                 'order' => 'WhenUpdated ASC', 
                 'current_LocalizationsID' => "0",
-            ])->json();
+            ]);
 
-            $items = $resp['body'] ?? $resp ?? [];
+            if ($resp->failed()) {
+                \Illuminate\Support\Facades\Log::error("PullUsersJob: Request failed. Status: " . $resp->status());
+                break;
+            }
+
+            $body = $resp->json();
+            $items = $body['body'] ?? $body ?? [];
             $itemCount = is_array($items) ? count($items) : 0;
+            $pageMaxDate = null;
 
-            \Illuminate\Support\Facades\Log::info("PullUsersJob: [" . now()->toDateTimeString() . "] Page {$page} response: " . json_encode($resp));
+            \Illuminate\Support\Facades\Log::info("PullUsersJob: [" . now()->toDateTimeString() . "] Page {$page} fetched {$itemCount} items.");
 
             foreach ($items as $r) {
-                
                 if (!is_array($r)) continue;
                 
                 $usersID = (int)($r['usersID'] ?? 0);
                 $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', now());
 
-                if (isset($r['whenUpdated']) && (!$maxDate || $r['whenUpdated'] > $maxDate)) {
-                    $maxDate = $r['whenUpdated'];
+                if (isset($r['whenUpdated']) && (!$pageMaxDate || $r['whenUpdated'] > $pageMaxDate)) {
+                    $pageMaxDate = $r['whenUpdated'];
                 }
                 
                 \App\Models\CrmUser::updateOrCreate(
@@ -122,22 +129,23 @@ class PullUsersJob implements ShouldQueue
                 $totalProcessed++;
             }
 
+            // Zapisujemy postep po KAZDEJ stronie
+            if ($pageMaxDate) {
+                $state->last_sync_at = \Carbon\Carbon::parse($pageMaxDate);
+                $state->save();
+            }
+
             $page++;
             
         } while ($itemCount >= $limit);
 
-        \Illuminate\Support\Facades\Log::info("PullUsersJob: completed. Total processed: {$totalProcessed}");
-
-        if ($maxDate) {
-            $state->last_sync_at = \Carbon\Carbon::parse($maxDate);
-        }
-
-        if (!$state->is_full_synced) {
+        if (!$state->is_full_synced && $totalProcessed > 0) {
             $state->is_full_synced = true;
             $state->full_sync_completed_at = now();
+            $state->save();
         }
 
-        $state->save();
+        \Illuminate\Support\Facades\Log::info("PullUsersJob: completed. Total processed: {$totalProcessed}");
     }
 
     private function validateDate($date, $default = null)
