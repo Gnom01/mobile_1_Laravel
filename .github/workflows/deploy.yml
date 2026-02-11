@@ -29,7 +29,7 @@ jobs:
             docker compose down || true
 
             # 2) HARD FIX: clean Laravel runtime dirs so git reset can't fail on unlink
-            # If you store uploads locally in backend/storage/app, see the safe variant below.
+            # If you store uploads locally in backend/storage/app, use safe variant (see comment below).
             rm -rf backend/storage backend/bootstrap/cache || true
             mkdir -p backend/storage backend/bootstrap/cache
             chmod -R u+rwX,g+rwX backend/storage backend/bootstrap/cache || true
@@ -39,27 +39,49 @@ jobs:
             git reset --hard origin/dev
             git clean -fd
 
-            # 4) Ensure Laravel .env exists and APP_KEY line is valid
-            if [ -f backend/.env.docker ] && [ ! -f backend/.env ]; then
-              cp -f backend/.env.docker backend/.env
+            # 4) Ensure docker env file exists (required by docker-compose.yml env_file: ./.env.docker)
+            if [ ! -f .env.docker ]; then
+              if [ -f backend/env.docker.example ]; then
+                cp -f backend/env.docker.example .env.docker
+              elif [ -f backend/.env.docker ]; then
+                cp -f backend/.env.docker .env.docker
+              else
+                echo "ERROR: .env.docker missing and no example found (backend/env.docker.example or backend/.env.docker)."
+                exit 1
+              fi
             fi
 
-            # Fix case where someone had "APP_KEY" without "="
+            # 5) Ensure Laravel .env exists and APP_KEY line is valid
+            if [ ! -f backend/.env ]; then
+              if [ -f backend/.env.docker ]; then
+                cp -f backend/.env.docker backend/.env
+              elif [ -f backend/.env.example ]; then
+                cp -f backend/.env.example backend/.env
+              fi
+            fi
+
+            # Fix case: "APP_KEY" without "="
             sed -i 's/^APP_KEY$/APP_KEY=/' backend/.env || true
             # Ensure APP_KEY exists at all
             grep -q '^APP_KEY=' backend/.env || echo 'APP_KEY=' >> backend/.env
 
-            # 5) Build & start
+            # 6) Build & start
             docker compose up -d --build
 
-            # 6) Install deps (inside container)
+            # 7) Install deps (inside container)
             docker compose exec -T php composer install --no-dev --optimize-autoloader
 
-            # 7) Generate key only if empty (keeps stable key across deploys)
+            # 8) Generate key only if not present already (keeps stable key across deploys)
             docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
-            # 8) Optional: migrations (uncomment if you want automatic migrations)
+            # 9) Optional: migrations (uncomment if you want automatic migrations)
             # docker compose exec -T php php artisan migrate --force
 
-            # 9) Restart workers
+            # 10) Restart workers
             docker compose restart queue scheduler
+
+            # ---- SAFE VARIANT (if you keep local uploads in backend/storage/app) ----
+            # Replace step (2) with:
+            # rm -rf backend/bootstrap/cache backend/storage/framework backend/storage/logs || true
+            # mkdir -p backend/bootstrap/cache backend/storage/framework backend/storage/logs
+            # chmod -R u+rwX,g+rwX backend/bootstrap/cache backend/storage/framework backend/storage/logs || true
