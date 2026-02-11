@@ -33,7 +33,7 @@ class PullClientsJob implements ShouldQueue
             $state->full_sync_started_at = now();
             $state->save();
         } else {
-            // Bezpieczny wzorzec: cofamy since o 1 sekunde, aby nie pominac rekordow o tej samej dacie
+ 
             $since = $state->last_sync_at 
                 ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s') 
                 : null;
