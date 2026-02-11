@@ -27,8 +27,7 @@ class PullClientsJob implements ShouldQueue
             ['last_sync_at' => now()->subYears(5), 'is_full_synced' => false]
         );
 
-        // Jesli nie jest w pelni zsynchronizowany, startujemy od zera (full sync)
-        // W przeciwnym razie robimy delte z bezpiecznym marginesem (minus 1 sekunda)
+
         if (!$state->is_full_synced) {
             $since = null;
             $state->full_sync_started_at = now();
