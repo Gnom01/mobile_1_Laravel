@@ -33,7 +33,7 @@ class PullUsersJob implements ShouldQueue
         $since = $state->last_sync_at ? $state->last_sync_at->format('Y-m-d H:i:s') : null;
         
         $page = 1;
-        $limit = 100; // Reduced from 500 to prevent memory issues
+        $limit = 100;  
         $maxDate = null;
         $totalProcessed = 0;
 
@@ -48,6 +48,8 @@ class PullUsersJob implements ShouldQueue
 
             $items = $resp['body'] ?? $resp ?? [];
             $itemCount = is_array($items) ? count($items) : 0;
+
+            \Illuminate\Support\Facades\Log::info("PullUsersJob: [" . now()->toDateTimeString() . "] Page {$page} response: " . json_encode($resp));
 
             foreach ($items as $r) {
                 
