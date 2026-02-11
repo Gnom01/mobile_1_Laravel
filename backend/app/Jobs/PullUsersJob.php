@@ -45,7 +45,7 @@ class PullUsersJob implements ShouldQueue
         }
 
         $page = 1;
-        $limit = 100;  
+        $limit = 1000;  
         $totalProcessed = 0;
 
         do {
