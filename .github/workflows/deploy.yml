@@ -23,36 +23,46 @@ jobs:
           script: |
             set -euo pipefail
 
+            # Przejdź do folderu projektu
             cd "${{ secrets.DEPLOY_PATH }}"
 
-            # Stop containers (avoid weird file locks)
+            # 1. Naprawa uprawnień przed operacjami Git
+            # Docker mógł utworzyć pliki jako root, co blokuje 'git reset'
+            sudo chown -R $USER:$USER .
+
+            # 2. Zatrzymaj kontenery
+            # Robimy to przed resetem, aby zwolnić blokady plików (file locks)
             docker compose down || true
 
-            # Update code
+            # 3. Aktualizacja kodu
             git fetch origin
             git reset --hard origin/dev
             git clean -fd
 
-            # Ensure Laravel .env exists and APP_KEY line is valid
+            # 4. Przygotowanie pliku .env
             if [ -f backend/.env.docker ] && [ ! -f backend/.env ]; then
               cp -f backend/.env.docker backend/.env
             fi
-            # if someone has "APP_KEY" without "="
+            
+            # Naprawa ewentualnych błędów w strukturze .env
             sed -i 's/^APP_KEY$/APP_KEY=/' backend/.env || true
-            # if missing completely
             grep -q '^APP_KEY=' backend/.env || echo 'APP_KEY=' >> backend/.env
 
-            # Build & start
+            # 5. Budowanie i uruchamianie obrazów
             docker compose up -d --build
 
-            # Install deps
+            # 6. Instalacja zależności PHP (wewnątrz kontenera)
             docker compose exec -T php composer install --no-dev --optimize-autoloader
 
-            # Generate key only if empty
+            # 7. Generowanie klucza aplikacji (tylko jeśli go nie ma)
             docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
-            # Migrate (optional — odkomentuj jeśli chcesz automatycznie)
+            # 8. Opcjonalne: Migracje bazy danych
             # docker compose exec -T php php artisan migrate --force
 
-            # Restart workers
+            # 9. Przywrócenie uprawnień dla serwera WWW wewnątrz kontenera
+            # Ważne, aby Laravel mógł pisać logi i cache
+            docker compose exec -T php chown -R www-data:www-data storage bootstrap/cache
+
+            # 10. Restart workerów
             docker compose restart queue scheduler
