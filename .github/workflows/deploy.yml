@@ -25,37 +25,40 @@ jobs:
 
             cd "${{ secrets.DEPLOY_PATH }}"
 
-            # 1) Stop containers (avoid locks)
+            # 1) Zatrzymanie kontenerów, aby zwolnić blokady plików
             docker compose down || true
 
-            # 2) HARD FIX: clean Laravel runtime dirs so git reset can't fail on unlink
-            # If you store uploads locally in backend/storage/app, use safe variant (see comment below).
-            rm -rf backend/storage backend/bootstrap/cache || true
-            mkdir -p backend/storage backend/bootstrap/cache
-            chmod -R u+rwX,g+rwX backend/storage backend/bootstrap/cache || true
+            # 2) SIŁOWA NAPRAWA UPRAWNIEŃ (Kluczowe dla Git Reset)
+            # Docker tworzy pliki jako root/www-data, których user 'ubuntu' nie może usunąć.
+            # Używamy sudo, aby przejąć kontrolę i wyczyścić problematyczne miejsca.
+            echo "Cleaning up storage and cache to avoid Git conflicts..."
+            sudo chown -R ubuntu:ubuntu .
+            sudo chmod -R u+rwX .
+            
+            # Usuwamy tylko zawartość runtime, aby git reset nie miał przeszkód
+            rm -rf backend/storage/framework/views/* || true
+            rm -rf backend/storage/logs/* || true
+            rm -rf backend/bootstrap/cache/*.php || true
 
-            # 3) Update code
+            # 3) Aktualizacja kodu z Git
             git fetch origin
             git reset --hard origin/dev
             git clean -fd
 
-            # 4) Ensure docker env file exists (required by docker-compose.yml env_file: ./.env.docker)
+            # 4) Zapewnienie struktury katalogów i uprawnień 777 dla Docker
+            # Musimy dać 777 tymczasowo, aby kontenery mogły tam swobodnie pisać na starcie
+            mkdir -p backend/storage/framework/{cache,data,sessions,views} backend/storage/logs backend/bootstrap/cache
+            sudo chmod -R 777 backend/storage backend/bootstrap/cache
+
+            # 5) Pliki .env
             if [ ! -f .env.docker ]; then
               if [ -f backend/env.docker.example ]; then
                 cp -f backend/env.docker.example .env.docker
               elif [ -f backend/.env.docker ]; then
                 cp -f backend/.env.docker .env.docker
-              else
-                echo "ERROR: .env.docker missing and no example found (backend/env.docker.example or backend/.env.docker)."
-                exit 1
               fi
             fi
 
-            # Ensure writable dirs for Laravel
-            mkdir -p backend/storage/framework/{cache,data,sessions,views} backend/storage/logs backend/bootstrap/cache
-            chmod -R 0777 backend/storage backend/bootstrap/cache || true
-
-            # 5) Ensure Laravel .env exists and APP_KEY line is valid
             if [ ! -f backend/.env ]; then
               if [ -f backend/.env.docker ]; then
                 cp -f backend/.env.docker backend/.env
@@ -64,28 +67,29 @@ jobs:
               fi
             fi
 
-            # Fix case: "APP_KEY" without "="
+            # Korekta APP_KEY w .env
             sed -i 's/^APP_KEY$/APP_KEY=/' backend/.env || true
-            # Ensure APP_KEY exists at all
             grep -q '^APP_KEY=' backend/.env || echo 'APP_KEY=' >> backend/.env
 
-            # 6) Build & start
+            # 6) Budowanie i start kontenerów
             docker compose up -d --build
 
-            # 7) Install deps (inside container)
-            docker compose exec -T php composer install --no-dev --optimize-autoloader
+            # 7) NAPRAWA UPRAWNIEŃ WEWNĄTRZ KONTENERA (Fix dla laravel.log)
+            # To przypisuje pliki do użytkownika, na którym działa PHP-FPM (www-data)
+            echo "Assigning ownership to www-data inside containers..."
+            docker compose exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+            docker compose exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-            # 8) Generate key only if not present already (keeps stable key across deploys)
+            # 8) Instalacja zależności i generowanie klucza
+            docker compose exec -T php composer install --no-dev --optimize-autoloader
             docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
-            # 9) Optional: migrations (uncomment if you want automatic migrations)
-            # docker compose exec -T php php artisan migrate --force
+            # 9) Czyszczenie cache Laravela
+            docker compose exec -T php php artisan config:cache
+            docker compose exec -T php php artisan route:cache
+            docker compose exec -T php php artisan view:cache
 
-            # 10) Restart workers
+            # 10) Restart workerów, aby przeładowały kod i uprawnienia
             docker compose restart queue scheduler
-
-            # ---- SAFE VARIANT (if you keep local uploads in backend/storage/app) ----
-            # Replace step (2) with:
-            # rm -rf backend/bootstrap/cache backend/storage/framework backend/storage/logs || true
-            # mkdir -p backend/bootstrap/cache backend/storage/framework backend/storage/logs
-            # chmod -R u+rwX,g+rwX backend/bootstrap/cache backend/storage/framework backend/storage/logs || true
+            
+            echo "Deploy finished successfully!"
