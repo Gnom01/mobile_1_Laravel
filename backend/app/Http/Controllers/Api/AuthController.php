@@ -61,11 +61,23 @@ class AuthController
     }
 
     /**
-     * Get the authenticated user's profile.
+     * Get the authenticated user's profile or a specific user's profile by usersID.
      */
     public function profile(Request $request)
     {
-        $user = $request->user();
+        $usersID = $request->input('usersID');
+
+        if ($usersID) {
+            $user = CrmUser::find($usersID);
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not found'
+                ], 404);
+            }
+        } else {
+            $user = $request->user();
+        }
 
         return response()->json([
             'success' => true,
@@ -84,7 +96,7 @@ class AuthController
                 'Pesel' => $user->Pesel,
                 'GenderDVID' => $user->GenderDVID,
                 'MemberCardNumber' => $user->MemberCardNumber,
-                'address' => $user->address, // include the generated address for convenience
+                'address' => $user->address,
             ],
         ]);
     }
