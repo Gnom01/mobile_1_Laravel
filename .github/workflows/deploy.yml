@@ -25,71 +25,50 @@ jobs:
 
             cd "${{ secrets.DEPLOY_PATH }}"
 
-            # 1) Zatrzymanie kontenerów, aby zwolnić blokady plików
+            # 1) Zatrzymanie kontenerów
+            # Używamy down, aby upewnić się, że procesy nie trzymają plików w pamięci
             docker compose down || true
 
-            # 2) SIŁOWA NAPRAWA UPRAWNIEŃ (Kluczowe dla Git Reset)
-            # Docker tworzy pliki jako root/www-data, których user 'ubuntu' nie może usunąć.
-            # Używamy sudo, aby przejąć kontrolę i wyczyścić problematyczne miejsca.
-            echo "Cleaning up storage and cache to avoid Git conflicts..."
-            sudo chown -R ubuntu:ubuntu .
-            sudo chmod -R u+rwX .
-            
-            # Usuwamy tylko zawartość runtime, aby git reset nie miał przeszkód
-            rm -rf backend/storage/framework/views/* || true
-            rm -rf backend/storage/logs/* || true
-            rm -rf backend/bootstrap/cache/*.php || true
-
-            # 3) Aktualizacja kodu z Git
+            # 2) Aktualizacja kodu z Git
+            # Ponieważ storage/ i bootstrap/cache/ są teraz Named Volumes, 
+            # Git nie spotka tam zablokowanych plików laravel.log czy widoków .php
+            echo "Updating code via Git..."
             git fetch origin
             git reset --hard origin/dev
             git clean -fd
 
-            # 4) Zapewnienie struktury katalogów i uprawnień 777 dla Docker
-            # Musimy dać 777 tymczasowo, aby kontenery mogły tam swobodnie pisać na starcie
-            mkdir -p backend/storage/framework/{cache,data,sessions,views} backend/storage/logs backend/bootstrap/cache
-            sudo chmod -R 777 backend/storage backend/bootstrap/cache
-
-            # 5) Pliki .env
+            # 3) Konfiguracja plików środowiskowych (.env)
             if [ ! -f .env.docker ]; then
-              if [ -f backend/env.docker.example ]; then
-                cp -f backend/env.docker.example .env.docker
-              elif [ -f backend/.env.docker ]; then
-                cp -f backend/.env.docker .env.docker
-              fi
+              [ -f backend/env.docker.example ] && cp backend/env.docker.example .env.docker
             fi
-
             if [ ! -f backend/.env ]; then
-              if [ -f backend/.env.docker ]; then
-                cp -f backend/.env.docker backend/.env
-              elif [ -f backend/.env.example ]; then
-                cp -f backend/.env.example backend/.env
-              fi
+              [ -f backend/.env.docker ] && cp backend/.env.docker backend/.env || cp backend/.env.example backend/.env || true
             fi
 
-            # Korekta APP_KEY w .env
-            sed -i 's/^APP_KEY$/APP_KEY=/' backend/.env || true
-            grep -q '^APP_KEY=' backend/.env || echo 'APP_KEY=' >> backend/.env
-
-            # 6) Budowanie i start kontenerów
+            # 4) Budowanie i start kontenerów
+            # Docker sam podepnie wolumeny dla storage i cache
             docker compose up -d --build
 
-            # 7) NAPRAWA UPRAWNIEŃ WEWNĄTRZ KONTENERA (Fix dla laravel.log)
-            # To przypisuje pliki do użytkownika, na którym działa PHP-FPM (www-data)
-            echo "Assigning ownership to www-data inside containers..."
+            # 5) Naprawa uprawnień WEWNĄTRZ kontenerów (Kluczowy krok)
+            # Musimy się upewnić, że user www-data wewnątrz Dockera ma prawa do wolumenów
+            echo "Assigning permissions to Docker volumes..."
             docker compose exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
             docker compose exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-            # 8) Instalacja zależności i generowanie klucza
+            # 6) Operacje Laravela (Composer i Artisan)
+            echo "Running Composer and Artisan commands..."
             docker compose exec -T php composer install --no-dev --optimize-autoloader
+            
+            # Generowanie klucza tylko jeśli go brak
             docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
-            # 9) Czyszczenie cache Laravela
+            # Optymalizacja konfiguracji
             docker compose exec -T php php artisan config:cache
             docker compose exec -T php php artisan route:cache
             docker compose exec -T php php artisan view:cache
 
-            # 10) Restart workerów, aby przeładowały kod i uprawnienia
+            # 7) Restart workerów
+            # Ważne, aby kolejki i scheduler widziały odświeżony kod i uprawnienia
             docker compose restart queue scheduler
-            
-            echo "Deploy finished successfully!"
+
+            echo "DEPLOY SUCCESSFUL!"
