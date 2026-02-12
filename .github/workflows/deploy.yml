@@ -26,61 +26,68 @@ jobs:
             cd "${{ secrets.DEPLOY_PATH }}"
 
             # 1) Stop kontenerów
-            # Używamy down, aby bezpiecznie zwolnić wolumeny przed aktualizacją kodu
             docker compose down || true
 
-            # 2) JEDNORAZOWE CZYSZCZENIE (Kluczowe przy przejściu na Named Volumes)
-            # Usuwamy pozostałości bind-mountów, które blokowały Git-a.
-            # Po tym deployu te foldery na hostcie będą puste.
-            echo "Removing old bind-mount leftovers..."
+            # 2) Czyszczenie (tylko to co konieczne)
+            echo "Cleaning up leftovers..."
             sudo rm -rf backend/storage/framework/views/* || true
             sudo rm -rf backend/storage/logs/* || true
             sudo rm -rf backend/bootstrap/cache/*.php || true
-            
-            # Przejmujemy uprawnienia, żeby Git mógł swobodnie operować na strukturze folderów
             sudo chown -R ubuntu:ubuntu backend/storage backend/bootstrap/cache || true
-            sudo chmod -R 775 backend/storage backend/bootstrap/cache || true
 
             # 3) Aktualizacja kodu z Git
             echo "Updating code via Git..."
             git fetch origin
             git reset --hard origin/dev
-            git clean -fd
+            # UWAGA: Usunąłem git clean -fd, aby nie usuwał Twoich plików .env
+            # Jeśli chcesz używać clean, musisz wykluczyć pliki .env
 
-            # 4) Konfiguracja plików .env
-            # Docker Compose potrzebuje pliku .env w głównym katalogu dla zmiennych DB
+            # 4) Konfiguracja plików .env (Poprawiona logika)
+            echo "Configuring environment files..."
+            
+            # Najpierw upewniamy się, że mamy plik .env.docker w głównym folderze
+            # Szukamy go w backend/ lub używamy przykładu
+            if [ ! -f .env.docker ]; then
+              if [ -f backend/.env.docker ]; then
+                cp backend/.env.docker .env.docker
+              elif [ -f backend/.env.docker.example ]; then
+                cp backend/.env.docker.example .env.docker
+              else
+                echo "Warning: .env.docker not found. Docker might fail."
+              fi
+            fi
+
+            # Teraz kopiujemy do .env (wymagane przez docker compose)
             cp .env.docker .env || true
             
-            # Zapewniamy, że Laravel wewnątrz backend/ też ma swój .env
+            # Kopiujemy do wnętrza backendu dla Laravela
             if [ ! -f backend/.env ]; then
               cp .env.docker backend/.env || true
             fi
 
             # 5) Budowanie i start kontenerów
-            # Tutaj Docker automatycznie stworzy i podepnie Named Volumes
-            echo "Starting containers with named volumes..."
+            echo "Starting containers..."
             docker compose up -d --build
 
             # 6) Naprawa uprawnień WEWNĄTRZ wolumenów
-            # To rozwiązuje Twój pierwotny problem z laravel.log na zawsze
             echo "Assigning permissions inside volumes..."
             docker compose exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
             docker compose exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-            # 7) Operacje Laravela (Composer i Artisan)
+            # 7) Operacje Laravela
             echo "Running Laravel optimizations..."
             docker compose exec -T php composer install --no-dev --optimize-autoloader
             
             # Generowanie klucza tylko jeśli go brakuje
             docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
-            # Czyszczenie i budowanie cache aplikacji
             docker compose exec -T php php artisan config:cache
             docker compose exec -T php php artisan route:cache
             docker compose exec -T php php artisan view:cache
 
             # 8) Restart workerów
-            # Odświeżamy procesy, aby załadowały nowy kod i zoptymalizowany cache
             docker compose restart queue scheduler
+
+            echo "DEPLOY SUCCESSFUL!"
 
             echo "DEPLOY SUCCESSFUL!"
