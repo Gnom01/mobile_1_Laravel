@@ -7,8 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 class UsersPaymentsSchedule extends Model
 {
     protected $table = 'userspaymentsschedules';
-    protected $primaryKey = 'usersPaymentsSchedulesID';
-    public $incrementing = false;
+    protected $primaryKey = 'id';
+    public $incrementing = true;
     public $timestamps = false;
     protected $guarded = [];
 
