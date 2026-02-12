@@ -25,10 +25,10 @@ jobs:
 
             cd "${{ secrets.DEPLOY_PATH }}"
 
-            # 1) Stop kontenerów
+            # 1) Zatrzymanie kontenerów przed aktualizacją
             docker compose down || true
 
-            # 2) Czyszczenie (tylko to co konieczne)
+            # 2) Czyszczenie pozostałości (Kluczowe dla stabilności)
             echo "Cleaning up leftovers..."
             sudo rm -rf backend/storage/framework/views/* || true
             sudo rm -rf backend/storage/logs/* || true
@@ -39,65 +39,60 @@ jobs:
             echo "Updating code via Git..."
             git fetch origin
             git reset --hard origin/dev
-            # UWAGA: Usunąłem git clean -fd, aby nie usuwał Twoich plików .env
-            # Jeśli chcesz używać clean, musisz wykluczyć pliki .env
 
-            # 4) Konfiguracja plików .env (Poprawiona logika)
+            # 4) Konfiguracja plików .env
             echo "Configuring environment files..."
-            
-            # Najpierw upewniamy się, że mamy plik .env.docker w głównym folderze
-            # Szukamy go w backend/ lub używamy przykładu
             if [ ! -f .env.docker ]; then
               if [ -f backend/.env.docker ]; then
                 cp backend/.env.docker .env.docker
               elif [ -f backend/.env.docker.example ]; then
                 cp backend/.env.docker.example .env.docker
-              else
-                echo "Warning: .env.docker not found. Docker might fail."
               fi
             fi
 
-            # Teraz kopiujemy do .env (wymagane przez docker compose)
             cp .env.docker .env || true
-            
-            # Kopiujemy do wnętrza backendu dla Laravela
             if [ ! -f backend/.env ]; then
               cp .env.docker backend/.env || true
             fi
 
-            # 5) Budowanie i start kontenerów
-            echo "Starting containers..."
+            # 5) Budowanie i start (Obsługa nowych ROZSZERZEŃ PHP)
+            # Flaga --build wymusza sprawdzenie Dockerfile. Jeśli dodałeś tam nowe 
+            # rozszerzenie (np. bcmath, gd), zostanie ono teraz doinstalowane.
+            echo "Building and starting containers (updating extensions if needed)..."
             docker compose up -d --build
 
-            # 6) Naprawa uprawnień WEWNĄTRZ wolumenów
+            # 6) Naprawa uprawnień w wolumenach
             echo "Assigning permissions inside volumes..."
             docker compose exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
             docker compose exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-            # 7) Operacje Laravela (Z DODANYM TWORZENIEM FOLDERÓW)
-            echo "Running Laravel optimizations..."
+            # 7) Operacje Laravela (MIGRACJE I OPTYMALIZACJA)
+            echo "Running Laravel tasks..."
             
-            # Upewniamy się, że struktura folderów wewnątrz wolumenu istnieje
+            # Tworzymy strukturę folderów w wolumenie (zapobiega błędowi View path not found)
             docker compose exec -T php mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing
-            
-            # Naprawiamy uprawnienia dla nowo stworzonych folderów
             docker compose exec -T php chown -R www-data:www-data storage
-            
+
+            # Instalacja zależności composer
             docker compose exec -T php composer install --no-dev --optimize-autoloader
-            
-            # Generowanie klucza tylko jeśli go brakuje
+
+            # --- MIGRACJE BAZY DANYCH ---
+            echo "Running database migrations..."
+            docker compose exec -T php php artisan migrate --force
+
+            # Generowanie klucza (tylko jeśli brak)
             docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
+            # Czyszczenie i budowanie cache
             docker compose exec -T php php artisan config:cache
             docker compose exec -T php php artisan route:cache
-            
-            # Próbujemy wyczyścić widoki przed cachowaniem
             docker compose exec -T php php artisan view:clear || true
             docker compose exec -T php php artisan view:cache
 
             # 8) Restart workerów
+            echo "Restarting queue and scheduler..."
             docker compose restart queue scheduler
 
+            echo "----------------------------------------"
             echo "DEPLOY SUCCESSFUL!"
-
-            echo "DEPLOY SUCCESSFUL!"
+            echo "----------------------------------------"
