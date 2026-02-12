@@ -1,49 +1,95 @@
-script: |
+name: Deploy (dev)
+
+on:
+  push:
+    branches: ["dev"]
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          debug: true
+          script: |
             set -euo pipefail
+
             cd "${{ secrets.DEPLOY_PATH }}"
 
-            # 1) Stop containers
+            # 1) Zatrzymanie kontenerów, aby zwolnić blokady plików
             docker compose down || true
 
-            # 2) HARD FIX: Używamy SUDO, aby usunąć pliki stworzone przez Docker
-            # To naprawi błąd "Permission denied" przy git reset
-            sudo rm -rf backend/storage/framework/views/*
-            sudo rm -rf backend/storage/logs/*
-            sudo rm -rf backend/bootstrap/cache/*.php
+            # 2) SIŁOWA NAPRAWA UPRAWNIEŃ (Kluczowe dla Git Reset)
+            # Docker tworzy pliki jako root/www-data, których user 'ubuntu' nie może usunąć.
+            # Używamy sudo, aby przejąć kontrolę i wyczyścić problematyczne miejsca.
+            echo "Cleaning up storage and cache to avoid Git conflicts..."
+            sudo chown -R ubuntu:ubuntu .
+            sudo chmod -R u+rwX .
             
-            # Upewniamy się, że katalogi istnieją i należą do usera ubuntu przed git reset
-            sudo chown -R ubuntu:ubuntu backend/storage backend/bootstrap/cache
-            sudo chmod -R u+rwX backend/storage backend/bootstrap/cache
+            # Usuwamy tylko zawartość runtime, aby git reset nie miał przeszkód
+            rm -rf backend/storage/framework/views/* || true
+            rm -rf backend/storage/logs/* || true
+            rm -rf backend/bootstrap/cache/*.php || true
 
-            # 3) Update code
+            # 3) Aktualizacja kodu z Git
             git fetch origin
             git reset --hard origin/dev
             git clean -fd
 
-            # 4) Przygotowanie struktury pod Laravela
+            # 4) Zapewnienie struktury katalogów i uprawnień 777 dla Docker
+            # Musimy dać 777 tymczasowo, aby kontenery mogły tam swobodnie pisać na starcie
             mkdir -p backend/storage/framework/{cache,data,sessions,views} backend/storage/logs backend/bootstrap/cache
-            # Tymczasowo dajemy pełne prawa, aby Docker mógł tam wejść
             sudo chmod -R 777 backend/storage backend/bootstrap/cache
 
-            # 5) .env i inne (Twoja dotychczasowa logika)
+            # 5) Pliki .env
             if [ ! -f .env.docker ]; then
-              cp backend/.env.docker.example .env.docker || cp backend/.env.docker .env.docker || true
-            fi
-            if [ ! -f backend/.env ]; then
-              cp backend/.env.example backend/.env || true
+              if [ -f backend/env.docker.example ]; then
+                cp -f backend/env.docker.example .env.docker
+              elif [ -f backend/.env.docker ]; then
+                cp -f backend/.env.docker .env.docker
+              fi
             fi
 
-            # 6) Build & start
+            if [ ! -f backend/.env ]; then
+              if [ -f backend/.env.docker ]; then
+                cp -f backend/.env.docker backend/.env
+              elif [ -f backend/.env.example ]; then
+                cp -f backend/.env.example backend/.env
+              fi
+            fi
+
+            # Korekta APP_KEY w .env
+            sed -i 's/^APP_KEY$/APP_KEY=/' backend/.env || true
+            grep -q '^APP_KEY=' backend/.env || echo 'APP_KEY=' >> backend/.env
+
+            # 6) Budowanie i start kontenerów
             docker compose up -d --build
 
-            # 7) Fix permissions INSIDE container (Kluczowy krok)
-            # To sprawia, że Laravel może pisać, a Ty nie masz błędów Permission Denied w logach
-            docker compose exec -T php chown -R www-data:www-data storage bootstrap/cache
-            docker compose exec -T php chmod -R 775 storage bootstrap/cache
+            # 7) NAPRAWA UPRAWNIEŃ WEWNĄTRZ KONTENERA (Fix dla laravel.log)
+            # To przypisuje pliki do użytkownika, na którym działa PHP-FPM (www-data)
+            echo "Assigning ownership to www-data inside containers..."
+            docker compose exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+            docker compose exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-            # 8) Reszta komend artisan
+            # 8) Instalacja zależności i generowanie klucza
             docker compose exec -T php composer install --no-dev --optimize-autoloader
             docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
-            
-            # 9) Restart, aby nowe uprawnienia zostały odświeżone w procesach
+
+            # 9) Czyszczenie cache Laravela
+            docker compose exec -T php php artisan config:cache
+            docker compose exec -T php php artisan route:cache
+            docker compose exec -T php php artisan view:cache
+
+            # 10) Restart workerów, aby przeładowały kod i uprawnienia
             docker compose restart queue scheduler
+            
+            echo "Deploy finished successfully!"
