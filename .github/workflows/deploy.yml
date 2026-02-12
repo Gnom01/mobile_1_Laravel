@@ -74,8 +74,15 @@ jobs:
             docker compose exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
             docker compose exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-            # 7) Operacje Laravela
+            # 7) Operacje Laravela (Z DODANYM TWORZENIEM FOLDERÓW)
             echo "Running Laravel optimizations..."
+            
+            # Upewniamy się, że struktura folderów wewnątrz wolumenu istnieje
+            docker compose exec -T php mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing
+            
+            # Naprawiamy uprawnienia dla nowo stworzonych folderów
+            docker compose exec -T php chown -R www-data:www-data storage
+            
             docker compose exec -T php composer install --no-dev --optimize-autoloader
             
             # Generowanie klucza tylko jeśli go brakuje
@@ -83,6 +90,9 @@ jobs:
 
             docker compose exec -T php php artisan config:cache
             docker compose exec -T php php artisan route:cache
+            
+            # Próbujemy wyczyścić widoki przed cachowaniem
+            docker compose exec -T php php artisan view:clear || true
             docker compose exec -T php php artisan view:cache
 
             # 8) Restart workerów
