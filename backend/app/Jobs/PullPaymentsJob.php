@@ -57,10 +57,21 @@ class PullPaymentsJob implements ShouldQueue
 
             if ($resp->failed()) {
                 Log::error("PullPaymentsJob: Request failed. Status: " . $resp->status());
+                Log::error("PullPaymentsJob: Response body: " . $resp->body());
                 break;
             }
 
             $body = $resp->json();
+            
+            // Debug logging
+            if ($page === 1) {
+                Log::info("PullPaymentsJob: First page response structure", [
+                    'has_body_key' => isset($body['body']),
+                    'response_keys' => array_keys($body ?? []),
+                    'response_sample' => json_encode($body, JSON_PRETTY_PRINT),
+                ]);
+            }
+            
             $items = $body['body'] ?? $body ?? [];
             $itemCount = is_array($items) ? count($items) : 0;
             $pageMaxDate = null;

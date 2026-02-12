@@ -55,10 +55,21 @@ class PullUsersRelationsJob implements ShouldQueue
 
             if ($resp->failed()) {
                 Log::error("PullUsersRelationsJob: Request failed. Status: " . $resp->status());
+                Log::error("PullUsersRelationsJob: Response body: " . $resp->body());
                 break;
             }
 
             $body = $resp->json();
+            
+            // Debug logging
+            if ($page === 1) {
+                Log::info("PullUsersRelationsJob: First page response structure", [
+                    'has_body_key' => isset($body['body']),
+                    'response_keys' => array_keys($body ?? []),
+                    'response_sample' => json_encode($body, JSON_PRETTY_PRINT),
+                ]);
+            }
+            
             $items = $body['body'] ?? $body ?? [];
             $itemCount = is_array($items) ? count($items) : 0;
             $pageMaxDate = null;
