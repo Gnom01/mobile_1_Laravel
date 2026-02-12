@@ -38,8 +38,7 @@ class PullUsersJob implements ShouldQueue
             $state->full_sync_started_at = now();
             $state->save();
         } else {
-            // Kontynuujemy od ostatniej zapisanej daty
-            $since = $state->last_sync_at 
+                        $since = $state->last_sync_at 
                 ? $state->last_sync_at->format('Y-m-d H:i:s') 
                 : null;
         }
