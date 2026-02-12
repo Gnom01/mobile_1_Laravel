@@ -28,7 +28,7 @@ class PullUsersRelationsJob implements ShouldQueue
             $state->save();
         } else {
             $since = $state->last_sync_at 
-                ? $state->last_sync_at->format('Y-m-d H:i:s') 
+                ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s') 
                 : null;
         }
 

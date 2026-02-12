@@ -27,6 +27,8 @@ class CrmSync extends Command
     {
         \App\Jobs\PullClientsJob::dispatch();
         \App\Jobs\PullUsersJob::dispatch();
+        \App\Jobs\PullPaymentsJob::dispatch();
+        \App\Jobs\PullUsersRelationsJob::dispatch();
         \App\Jobs\PushOutboxJob::dispatch();
 
         $this->info('Sync jobs dispatched');
