@@ -37,7 +37,7 @@ class PullUsersJob implements ShouldQueue
         
         $state = \App\Models\SyncState::firstOrCreate(
             ['resource' => 'users'],
-            ['last_sync_at' => now()->subYears(5), 'is_full_synced' => false]
+            ['last_sync_at' => null, 'is_full_synced' => false]
         );
 
         // Jesli nie jest w pelni zsynchronizowany, startujemy od zera (full sync)

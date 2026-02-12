@@ -27,7 +27,7 @@ class PullUsersRelationsJob implements ShouldQueue
         try {
         $state = SyncState::firstOrCreate(
             ['resource' => 'usersrelations'],
-            ['last_sync_at' => now()->subYears(5), 'is_full_synced' => false]
+            ['last_sync_at' => null, 'is_full_synced' => false]
         );
 
         if (!$state->is_full_synced && !$state->full_sync_started_at) {

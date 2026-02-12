@@ -32,7 +32,7 @@ class PullClientsJob implements ShouldQueue
         try {
         $state = \App\Models\SyncState::firstOrCreate(
             ['resource' => 'clients'],
-            ['last_sync_at' => now()->subYears(5), 'is_full_synced' => false]
+            ['last_sync_at' => null, 'is_full_synced' => false]
         );
 
 
