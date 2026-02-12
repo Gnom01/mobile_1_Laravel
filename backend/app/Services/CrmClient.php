@@ -35,6 +35,7 @@ class CrmClient
 
         $http = Http::baseUrl(config('services.crm.base_url'))
             ->withToken($token)
+            ->withoutVerifying() // Fix for local SSL issue
             ->timeout(20);
 
         $fullUrl = config('services.crm.base_url') . $url;
@@ -49,6 +50,7 @@ class CrmClient
 
             $resp = Http::baseUrl(config('services.crm.base_url'))
                 ->withToken($token2)
+                ->withoutVerifying() // Fix for local SSL issue
                 ->timeout(20)
                 ->{$method}($url, $payload);
         }

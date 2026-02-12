@@ -18,13 +18,11 @@ class CrmAuthService
 
             // token ważny jeszcze > 60s => użyj
             if ($token && $token->expires_at && $token->expires_at->gt(now()->addSeconds(60))) {
-                Log::info('CRM Auth: Using existing valid token. Expires at: ' . $token->expires_at);
                 return $token->access_token;
             }
 
             // jeśli jest refresh_token => spróbuj refresh
             if ($token && $token->refresh_token) {
-                Log::info('CRM Auth: Attempting token refresh.');
                 $new = $this->refresh($token->refresh_token);
                 if ($new) return $new;
             }
@@ -38,6 +36,7 @@ class CrmAuthService
     private function http()
     {
         return Http::baseUrl(config('services.crm.base_url'))
+            ->withoutVerifying() // Fix for local SSL issue
             ->timeout(20)
             ->retry(2, 300);
     }

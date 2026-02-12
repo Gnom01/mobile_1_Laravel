@@ -24,7 +24,9 @@ class PullPaymentsJob implements ShouldQueue
             return;
         }
 
-        try {
+        Log::info('PullPaymentsJob: Lock acquired - starting job execution');
+
+         try {
         ini_set('memory_limit', '512M');
         
         $state = SyncState::firstOrCreate(
@@ -66,12 +68,14 @@ class PullPaymentsJob implements ShouldQueue
             // CRM returns a direct array of objects, not wrapped in 'body'
             $items = is_array($body) ? $body : ($body['body'] ?? []);
             
-            $itemCount = is_array($items) ? count($items) : 0;
+            $itemCount = is_array($items["body"]) ? count($items["body"]) : 0;
+            Log::info("PullPaymentsJob: Page {$page} extracted {$itemCount} items.");
+
             $pageMaxDate = null;
 
             Log::info("PullPaymentsJob: Page {$page} fetched {$itemCount} items.");
 
-            foreach ($items as $r) {
+            foreach ($items["body"] as $r) {
                 if (!is_array($r)) continue;
                 
                 $id = (int)($r['usersPaymentsSchedulesID'] ?? 0);

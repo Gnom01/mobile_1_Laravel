@@ -64,10 +64,13 @@ class PullUsersRelationsJob implements ShouldQueue
             // CRM returns a direct array of objects, not wrapped in 'body'
             $items = is_array($body) ? $body : ($body['body'] ?? []);
 
-            $itemCount = is_array($items) ? count($items) : 0;
+            $itemCount = is_array($items['body']) ? count($items) : 0;
+            Log::info("PullUsersRelationsJob: Page {$page} extracted {$itemCount} items.");
+
+ 
             $pageMaxDate = null;
 
-            foreach ($items as $r) {
+            foreach ($items['body'] as $r) {
                 if (!is_array($r)) continue;
                 
                 $id = (int)($r['usersRelationsID'] ?? 0);
