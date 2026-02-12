@@ -61,6 +61,35 @@ class AuthController
     }
 
     /**
+     * Get the authenticated user's profile.
+     */
+    public function profile(Request $request)
+    {
+        $user = $request->user();
+
+        return response()->json([
+            'success' => true,
+            'user' => [
+                'UsersID' => $user->UsersID,
+                'FirstName' => $user->FirstName,
+                'LastName' => $user->LastName,
+                'Email' => $user->Email,
+                'Phone' => $user->Phone,
+                'DateOfBirdth' => $user->DateOfBirdth ? $user->DateOfBirdth->format('Y-m-d') : null,
+                'Street' => $user->Street,
+                'Building' => $user->Building,
+                'Flat' => $user->Flat,
+                'City' => $user->City,
+                'PostalCode' => $user->PostalCode,
+                'Pesel' => $user->Pesel,
+                'GenderDVID' => $user->GenderDVID,
+                'MemberCardNumber' => $user->MemberCardNumber,
+                'address' => $user->address, // include the generated address for convenience
+            ],
+        ]);
+    }
+
+    /**
      * Logout and revoke the token.
      */
     public function logout(Request $request)
