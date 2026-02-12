@@ -17,6 +17,14 @@ class PullUsersRelationsJob implements ShouldQueue
 
     public function handle(\App\Services\CrmClient $crm)
     {
+        $lock = \Illuminate\Support\Facades\Cache::lock('sync:usersrelations', 3600);
+
+        if (!$lock->get()) {
+            Log::warning('PullUsersRelationsJob: Already running, skipping.');
+            return;
+        }
+
+        try {
         $state = SyncState::firstOrCreate(
             ['resource' => 'usersrelations'],
             ['last_sync_at' => now()->subYears(5), 'is_full_synced' => false]
@@ -103,6 +111,9 @@ class PullUsersRelationsJob implements ShouldQueue
         }
 
         Log::info("PullUsersRelationsJob: completed. Total processed: {$totalProcessed}");
+        } finally {
+            $lock->forceRelease();
+        }
     }
 
     private function validateDate($date, $default = null)

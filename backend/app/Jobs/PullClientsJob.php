@@ -22,6 +22,14 @@ class PullClientsJob implements ShouldQueue
      */
     public function handle(\App\Services\CrmClient $crm)
     {
+        $lock = \Illuminate\Support\Facades\Cache::lock('sync:clients', 3600);
+
+        if (!$lock->get()) {
+            \Illuminate\Support\Facades\Log::warning('PullClientsJob: Already running, skipping.');
+            return;
+        }
+
+        try {
         $state = \App\Models\SyncState::firstOrCreate(
             ['resource' => 'clients'],
             ['last_sync_at' => now()->subYears(5), 'is_full_synced' => false]
@@ -119,6 +127,9 @@ class PullClientsJob implements ShouldQueue
         }
 
         $state->save();
+        } finally {
+            $lock->forceRelease();
+        }
     }
 
     private function validateDate($date, $default = null)

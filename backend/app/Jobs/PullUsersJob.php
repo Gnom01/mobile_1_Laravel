@@ -24,6 +24,14 @@ class PullUsersJob implements ShouldQueue
 
     public function handle(\App\Services\CrmAuthService $auth, \App\Services\CrmClient $crm)
     {
+        $lock = \Illuminate\Support\Facades\Cache::lock('sync:users', 3600);
+
+        if (!$lock->get()) {
+            \Illuminate\Support\Facades\Log::warning('PullUsersJob: Already running, skipping.');
+            return;
+        }
+
+        try {
         // Increase memory limit to prevent exhaustion
         ini_set('memory_limit', '512M');
         
@@ -163,6 +171,9 @@ class PullUsersJob implements ShouldQueue
         }
 
         \Illuminate\Support\Facades\Log::info("PullUsersJob: completed. Total processed: {$totalProcessed}");
+        } finally {
+            $lock->forceRelease();
+        }
     }
 
     private function validateDate($date, $default = null)

@@ -17,6 +17,14 @@ class PullPaymentsJob implements ShouldQueue
 
     public function handle(\App\Services\CrmClient $crm)
     {
+        $lock = \Illuminate\Support\Facades\Cache::lock('sync:payments', 3600);
+
+        if (!$lock->get()) {
+            Log::warning('PullPaymentsJob: Already running, skipping.');
+            return;
+        }
+
+        try {
         ini_set('memory_limit', '512M');
         
         $state = SyncState::firstOrCreate(
@@ -126,6 +134,9 @@ class PullPaymentsJob implements ShouldQueue
         }
 
         Log::info("PullPaymentsJob: completed. Total processed: {$totalProcessed}");
+        } finally {
+            $lock->forceRelease();
+        }
     }
 
     private function validateDate($date, $default = null)
