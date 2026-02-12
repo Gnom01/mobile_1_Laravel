@@ -102,6 +102,35 @@ class AuthController
     }
 
     /**
+     * Get the user's consents (permissions).
+     */
+    public function consents(Request $request)
+    {
+        $usersID = $request->input('usersID');
+
+        if ($usersID) {
+            $user = CrmUser::find($usersID);
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not found'
+                ], 404);
+            }
+        } else {
+            $user = $request->user();
+        }
+
+        return response()->json([
+            'success' => true,
+            'consents' => [
+                'PersonalDataProcessingConsent' => (bool) $user->PersonalDataProcessingConsent,
+                'consentReceiveSmsEmailPhone' => (bool) $user->consentReceiveSmsEmailPhone,
+                'marketingAgreement' => (bool) $user->marketingAgreement,
+            ],
+        ]);
+    }
+
+    /**
      * Logout and revoke the token.
      */
     public function logout(Request $request)
