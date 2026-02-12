@@ -51,7 +51,7 @@ class AuthController
             'success' => true,
             'token' => $token,
             'user' => [
-                'id' => $user->UsersID,
+                'guid' => $user->guid,
                 'email' => $user->Email,
                 'first_name' => $user->FirstName,
                 'last_name' => $user->LastName,
@@ -65,10 +65,10 @@ class AuthController
      */
     public function profile(Request $request)
     {
-        $usersID = $request->input('usersID');
+        $guid = $request->input('guid');
 
-        if ($usersID) {
-            $user = CrmUser::find($usersID);
+        if ($guid) {
+            $user = CrmUser::where('guid', $guid)->first();
             if (!$user) {
                 return response()->json([
                     'success' => false,
@@ -82,7 +82,7 @@ class AuthController
         return response()->json([
             'success' => true,
             'user' => [
-                'UsersID' => $user->UsersID,
+                'guid' => $user->guid,
                 'FirstName' => $user->FirstName,
                 'LastName' => $user->LastName,
                 'Email' => $user->Email,
@@ -106,10 +106,10 @@ class AuthController
      */
     public function consents(Request $request)
     {
-        $usersID = $request->input('usersID');
+        $guid = $request->input('guid');
 
-        if ($usersID) {
-            $user = CrmUser::find($usersID);
+        if ($guid) {
+            $user = CrmUser::where('guid', $guid)->first();
             if (!$user) {
                 return response()->json([
                     'success' => false,

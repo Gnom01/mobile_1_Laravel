@@ -72,6 +72,7 @@ class PullUsersJob implements ShouldQueue
                 if (!is_array($r)) continue;
                 
                 $usersID = (int)($r['usersID'] ?? 0);
+                $guid = (string)($r['guid'] ?? ''); // Map guid from CRM
                 $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', now());
 
                 if (isset($r['whenUpdated']) && (!$pageMaxDate || $r['whenUpdated'] > $pageMaxDate)) {
@@ -81,6 +82,7 @@ class PullUsersJob implements ShouldQueue
                 \App\Models\CrmUser::updateOrCreate(
                     ['UsersID' => $usersID],
                     [
+                        'guid' => $guid,
                         'LastName' => (string)($r['lastName'] ?? ''),
                         'FirstName' => (string)($r['firstName'] ?? ''),
                         'Login' => (string)($r['login'] ?? ''),
