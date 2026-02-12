@@ -73,6 +73,11 @@ class PullUsersJob implements ShouldQueue
                 
                 $usersID = (int)($r['usersID'] ?? 0);
                 $guid = (string)($r['guid'] ?? ''); // Map guid from CRM
+                
+                if (empty($guid)) {
+                    $guid = (string) \Illuminate\Support\Str::uuid();
+                }
+
                 $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', now());
 
                 if (isset($r['whenUpdated']) && (!$pageMaxDate || $r['whenUpdated'] > $pageMaxDate)) {
