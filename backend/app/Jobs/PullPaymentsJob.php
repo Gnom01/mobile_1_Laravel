@@ -63,16 +63,9 @@ class PullPaymentsJob implements ShouldQueue
 
             $body = $resp->json();
             
-            // Debug logging
-            if ($page === 1) {
-                Log::info("PullPaymentsJob: First page response structure", [
-                    'has_body_key' => isset($body['body']),
-                    'response_keys' => array_keys($body ?? []),
-                    'response_sample' => json_encode($body, JSON_PRETTY_PRINT),
-                ]);
-            }
+            // CRM returns a direct array of objects, not wrapped in 'body'
+            $items = is_array($body) ? $body : ($body['body'] ?? []);
             
-            $items = $body['body'] ?? $body ?? [];
             $itemCount = is_array($items) ? count($items) : 0;
             $pageMaxDate = null;
 
