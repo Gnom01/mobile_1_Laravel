@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # ───────────────────────────────────────────────
   # Baza danych
@@ -28,12 +30,15 @@ services:
   # ───────────────────────────────────────────────
   php:
     build:
-      context: ./docker/php
+      context: .
+      dockerfile: ./docker/php/Dockerfile
     container_name: mobile_1_laravel-php-1
     restart: unless-stopped
     working_dir: /var/www/html
     volumes:
       - ./backend:/var/www/html
+      - laravel_storage:/var/www/html/storage        # NAMED VOLUME
+      - laravel_cache:/var/www/html/bootstrap/cache   # NAMED VOLUME
     env_file:
       - ./.env.docker
     depends_on:
@@ -54,23 +59,27 @@ services:
     volumes:
       - ./backend:/var/www/html
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - laravel_storage:/var/www/html/storage        # NAMED VOLUME (żeby Nginx widział publiczne pliki)
     depends_on:
       - php
     networks:
       - app-network
 
   # ───────────────────────────────────────────────
-  # Worker / Queue (przetwarza joby z kolejki)
+  # Worker / Queue
   # ───────────────────────────────────────────────
   queue:
     build:
-      context: ./docker/php
+      context: .
+      dockerfile: ./docker/php/Dockerfile
     container_name: mobile_1_laravel-queue-1
     restart: unless-stopped
     working_dir: /var/www/html
     command: php artisan queue:work --tries=3 --timeout=120 --sleep=3
     volumes:
       - ./backend:/var/www/html
+      - laravel_storage:/var/www/html/storage
+      - laravel_cache:/var/www/html/bootstrap/cache
     env_file:
       - ./.env.docker
     depends_on:
@@ -86,13 +95,16 @@ services:
   # ───────────────────────────────────────────────
   scheduler:
     build:
-      context: ./docker/php
+      context: .
+      dockerfile: ./docker/php/Dockerfile
     container_name: mobile_1_laravel-scheduler-1
     restart: unless-stopped
     working_dir: /var/www/html
     command: php artisan schedule:work --verbose --no-interaction
     volumes:
       - ./backend:/var/www/html
+      - laravel_storage:/var/www/html/storage
+      - laravel_cache:/var/www/html/bootstrap/cache
     env_file:
       - ./.env.docker
     depends_on:
@@ -103,8 +115,13 @@ services:
     networks:
       - app-network
 
+# ───────────────────────────────────────────────
+# WOLUMENY - To tutaj izolujemy logi od plików hosta
+# ───────────────────────────────────────────────
 volumes:
   mysql_data:
+  laravel_storage: # Laravel będzie tu trzymał logi i sesje
+  laravel_cache:   # Tutaj będą skompilowane widoki (views)
 
 networks:
   app-network:
