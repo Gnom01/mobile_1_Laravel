@@ -32,7 +32,7 @@ class PullClientsJob implements ShouldQueue
         }
 
         try {
-            /* 
+            
             $state = \App\Models\SyncState::firstOrCreate(
                 ['resource' => 'clients'],
                 ['last_sync_at' => null, 'is_full_synced' => false]
@@ -125,7 +125,7 @@ class PullClientsJob implements ShouldQueue
             }
 
             $state->save();
-            */
+            
         } finally {
             $lock->forceRelease();
             \Illuminate\Support\Facades\Log::info("PullClientsJob finished");

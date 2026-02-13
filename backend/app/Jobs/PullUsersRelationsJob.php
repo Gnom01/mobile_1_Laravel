@@ -27,7 +27,7 @@ class PullUsersRelationsJob implements ShouldQueue
         }
 
         try {
-            /* 
+           
             $state = SyncState::firstOrCreate(
                 ['resource' => 'usersrelations'],
                 ['last_sync_at' => null, 'is_full_synced' => false]
@@ -117,7 +117,7 @@ class PullUsersRelationsJob implements ShouldQueue
                 $state->full_sync_completed_at = now();
                 $state->save();
             }
-            */
+           
         } finally {
             $lock->forceRelease();
             Log::info("PullUsersRelationsJob finished");

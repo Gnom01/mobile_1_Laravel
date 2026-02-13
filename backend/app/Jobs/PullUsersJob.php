@@ -34,7 +34,7 @@ class PullUsersJob implements ShouldQueue
         }
 
         try {
-            /* 
+            
             ini_set('memory_limit', '512M');
             
             $state = \App\Models\SyncState::firstOrCreate(
@@ -167,7 +167,7 @@ class PullUsersJob implements ShouldQueue
                 $state->full_sync_completed_at = now();
                 $state->save();
             }
-            */
+            
         } finally {
             $lock->forceRelease();
             \Illuminate\Support\Facades\Log::info("PullUsersJob finished");

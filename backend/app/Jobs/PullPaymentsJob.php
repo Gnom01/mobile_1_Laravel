@@ -27,7 +27,7 @@ class PullPaymentsJob implements ShouldQueue
         }
 
         try {
-            /* 
+           
             ini_set('memory_limit', '512M');
             
             $state = SyncState::firstOrCreate(
@@ -138,7 +138,7 @@ class PullPaymentsJob implements ShouldQueue
                 $state->full_sync_completed_at = now();
                 $state->save();
             }
-            */
+            
         } finally {
             $lock->forceRelease();
             Log::info("PullPaymentsJob finished");
