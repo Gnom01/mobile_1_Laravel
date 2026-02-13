@@ -22,6 +22,8 @@ class PushOutboxJob implements ShouldQueue
      */
     public function handle(\App\Services\CrmClient $crm)
     {
+        \Illuminate\Support\Facades\Log::info("PushOutboxJob started");
+        /* 
         $events = \App\Models\OutboxEvent::where('status', 'pending')
             ->orderBy('id')
             ->limit(100)
@@ -51,6 +53,8 @@ class PushOutboxJob implements ShouldQueue
                 $e->save();
             }
         }
+        */
+        \Illuminate\Support\Facades\Log::info("PushOutboxJob finished");
     }
 
 }

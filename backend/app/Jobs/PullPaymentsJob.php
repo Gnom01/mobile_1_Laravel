@@ -17,6 +17,8 @@ class PullPaymentsJob implements ShouldQueue
 
     public function handle(\App\Services\CrmClient $crm)
     {
+        Log::info("PullPaymentsJob started");
+
         $lock = \Illuminate\Support\Facades\Cache::lock('sync:payments', 3600);
 
         if (!$lock->get()) {
@@ -24,126 +26,122 @@ class PullPaymentsJob implements ShouldQueue
             return;
         }
 
-        Log::info('PullPaymentsJob: Lock acquired - starting job execution');
+        try {
+            /* 
+            ini_set('memory_limit', '512M');
+            
+            $state = SyncState::firstOrCreate(
+                ['resource' => 'payments'],
+                ['last_sync_at' => null, 'is_full_synced' => false]
+            );
 
-         try {
-        ini_set('memory_limit', '512M');
-        
-        $state = SyncState::firstOrCreate(
-            ['resource' => 'payments'],
-            ['last_sync_at' => null, 'is_full_synced' => false]
-        );
-
-        if (!$state->is_full_synced && !$state->full_sync_started_at) {
-            $since = null;
-            $state->full_sync_started_at = now();
-            $state->save();
-        } else {
-            $since = $state->last_sync_at 
-                ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s') 
-                : null;
-        }
-
-        $page = 1;
-        $limit = 1000;
-        $totalProcessed = 0;
-
-        do {
-            $resp = $crm->post('/CrmToMobileSync/getUserspaymentsschedulesMobile', [
-                'updatedSince' => $since,
-                'pageSize' => $limit,
-                'page' => $page,
-                'order' => 'WhenUpdated ASC',
-                'current_LocalizationsID' => "0",
-            ]);
-
-            if ($resp->failed()) {
-                Log::error("PullPaymentsJob: Request failed. Status: " . $resp->status());
-                Log::error("PullPaymentsJob: Response body: " . $resp->body());
-                break;
+            if (!$state->is_full_synced && !$state->full_sync_started_at) {
+                $since = null;
+                $state->full_sync_started_at = now();
+                $state->save();
+            } else {
+                $since = $state->last_sync_at 
+                    ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s') 
+                    : null;
             }
 
-            $body = $resp->json();
-            
-            // CRM returns a direct array of objects, not wrapped in 'body'
-            $items = is_array($body) ? $body : ($body['body'] ?? []);
-            
-            $itemCount = is_array($items["body"]) ? count($items["body"]) : 0;
-            Log::info("PullPaymentsJob: Page {$page} extracted {$itemCount} items.");
+            $page = 1;
+            $limit = 1000;
+            $totalProcessed = 0;
 
-            $pageMaxDate = null;
+            do {
+                $resp = $crm->post('/CrmToMobileSync/getUserspaymentsschedulesMobile', [
+                    'updatedSince' => $since,
+                    'pageSize' => $limit,
+                    'page' => $page,
+                    'order' => 'WhenUpdated ASC',
+                    'current_LocalizationsID' => "0",
+                ]);
 
-            Log::info("PullPaymentsJob: Page {$page} fetched {$itemCount} items.");
-
-            foreach ($items["body"] as $r) {
-                if (!is_array($r)) continue;
-                
-                $id = (int)($r['usersPaymentsSchedulesID'] ?? 0);
-                if (!$id) continue;
-
-                if (isset($r['whenUpdated']) && (!$pageMaxDate || $r['whenUpdated'] > $pageMaxDate)) {
-                    $pageMaxDate = $r['whenUpdated'];
+                if ($resp->failed()) {
+                    Log::error("PullPaymentsJob: Request failed. Status: " . $resp->status());
+                    Log::error("PullPaymentsJob: Response body: " . $resp->body());
+                    break;
                 }
 
-                UsersPaymentsSchedule::updateOrCreate(
-                    ['usersPaymentsSchedulesID' => $id],
-                    [
-                        'usersID' => (int)($r['usersID'] ?? 0),
-                        'contractsID' => (int)($r['contractsID'] ?? 0),
-                        'productsID' => (int)($r['productsID'] ?? 0),
-                        'coursesHeadingsID' => (int)($r['coursesHeadingsID'] ?? 0),
-                        'instalmentNumber' => (int)($r['instalmentNumber'] ?? 0),
-                        'contractInstalmentNumber' => (int)($r['contractInstalmentNumber'] ?? 0),
-                        'voidInstalment' => (int)($r['voidInstalment'] ?? 0),
-                        'positionName' => (string)($r['positionName'] ?? $r['productName'] ?? ''),
-                        'productAvailableFromDate' => (string)($r['productAvailableFromDate'] ?? ''),
-                        'productAvailableToDate' => (string)($r['productAvailableToDate'] ?? ''),
-                        'lessonsAreCounted' => (int)($r['lessonsAreCounted'] ?? 0),
-                        'lessonsRemainingForUse' => (int)($r['lessonsRemainingForUse'] ?? 0),
-                        'paymentDate' => $this->validateDate($r['paymentDate'] ?? '', null),
-                        'paymentAmount' => (float)($r['paymentAmount'] ?? 0),
-                        'paymentStatusesDVID' => (int)($r['paymentStatusesDVID'] ?? 1),
-                        'paymentMethodDVIDList' => (string)($r['paymentMethodDVIDList'] ?? '0'),
-                        'amountPaid' => (float)($r['amountPaid'] ?? 0),
-                        'amountTransferred' => (float)($r['amountTransferred'] ?? 0),
-                        'amountCorrected' => (float)($r['amountCorrected'] ?? 0),
-                        'comments' => (string)($r['comments'] ?? ''),
-                        'localizationsID' => (int)($r['localizationsID'] ?? 0),
-                        'cancelled' => (int)($r['cancelled'] ?? 0),
-                        'whenInserted' => $this->validateDate($r['whenInserted'] ?? '', now()),
-                        'whoInserted_UsersID' => (int)($r['whoInserted_UsersID'] ?? 0),
-                        'whenUpdated' => $this->validateDate($r['whenUpdated'] ?? '', now()),
-                        'whoUpdated_UsersID' => (int)($r['whoUpdated_UsersID'] ?? 0),
-                        'price' => (float)($r['price'] ?? 0),
-                        'usersProductsID' => (int)($r['usersProductsID'] ?? 0),
-                        'lastPaymentDate' => $this->validateDate($r['lastPaymentDate'] ?? '', null),
-                        'processesDVID' => (int)($r['processesDVID'] ?? 0),
-                        'payer_UsersID' => (int)($r['payer_UsersID'] ?? 0),
-                        'paymentMethodDVID' => (string)($r['paymentMethodDVID'] ?? ''),
-                    ]
-                );
+                $body = $resp->json();
                 
-                $totalProcessed++;
-            }
+                // CRM returns a direct array of objects, not wrapped in 'body'
+                $items = is_array($body) ? $body : ($body['body'] ?? []);
+                
+                $itemCount = is_array($items["body"]) ? count($items["body"]) : 0;
 
-            if ($pageMaxDate) {
-                $state->last_sync_at = Carbon::parse($pageMaxDate);
+                $pageMaxDate = null;
+
+                foreach ($items["body"] as $r) {
+                    if (!is_array($r)) continue;
+                    
+                    $id = (int)($r['usersPaymentsSchedulesID'] ?? 0);
+                    if (!$id) continue;
+
+                    if (isset($r['whenUpdated']) && (!$pageMaxDate || $r['whenUpdated'] > $pageMaxDate)) {
+                        $pageMaxDate = $r['whenUpdated'];
+                    }
+
+                    UsersPaymentsSchedule::updateOrCreate(
+                        ['usersPaymentsSchedulesID' => $id],
+                        [
+                            'usersID' => (int)($r['usersID'] ?? 0),
+                            'contractsID' => (int)($r['contractsID'] ?? 0),
+                            'productsID' => (int)($r['productsID'] ?? 0),
+                            'coursesHeadingsID' => (int)($r['coursesHeadingsID'] ?? 0),
+                            'instalmentNumber' => (int)($r['instalmentNumber'] ?? 0),
+                            'contractInstalmentNumber' => (int)($r['contractInstalmentNumber'] ?? 0),
+                            'voidInstalment' => (int)($r['voidInstalment'] ?? 0),
+                            'positionName' => (string)($r['positionName'] ?? $r['productName'] ?? ''),
+                            'productAvailableFromDate' => (string)($r['productAvailableFromDate'] ?? ''),
+                            'productAvailableToDate' => (string)($r['productAvailableToDate'] ?? ''),
+                            'lessonsAreCounted' => (int)($r['lessonsAreCounted'] ?? 0),
+                            'lessonsRemainingForUse' => (int)($r['lessonsRemainingForUse'] ?? 0),
+                            'paymentDate' => $this->validateDate($r['paymentDate'] ?? '', null),
+                            'paymentAmount' => (float)($r['paymentAmount'] ?? 0),
+                            'paymentStatusesDVID' => (int)($r['paymentStatusesDVID'] ?? 1),
+                            'paymentMethodDVIDList' => (string)($r['paymentMethodDVIDList'] ?? '0'),
+                            'amountPaid' => (float)($r['amountPaid'] ?? 0),
+                            'amountTransferred' => (float)($r['amountTransferred'] ?? 0),
+                            'amountCorrected' => (float)($r['amountCorrected'] ?? 0),
+                            'comments' => (string)($r['comments'] ?? ''),
+                            'localizationsID' => (int)($r['localizationsID'] ?? 0),
+                            'cancelled' => (int)($r['cancelled'] ?? 0),
+                            'whenInserted' => $this->validateDate($r['whenInserted'] ?? '', now()),
+                            'whoInserted_UsersID' => (int)($r['whoInserted_UsersID'] ?? 0),
+                            'whenUpdated' => $this->validateDate($r['whenUpdated'] ?? '', now()),
+                            'whoUpdated_UsersID' => (int)($r['whoUpdated_UsersID'] ?? 0),
+                            'price' => (float)($r['price'] ?? 0),
+                            'usersProductsID' => (int)($r['usersProductsID'] ?? 0),
+                            'lastPaymentDate' => $this->validateDate($r['lastPaymentDate'] ?? '', null),
+                            'processesDVID' => (int)($r['processesDVID'] ?? 0),
+                            'payer_UsersID' => (int)($r['payer_UsersID'] ?? 0),
+                            'paymentMethodDVID' => (string)($r['paymentMethodDVID'] ?? ''),
+                        ]
+                    );
+                    
+                    $totalProcessed++;
+                }
+
+                if ($pageMaxDate) {
+                    $state->last_sync_at = Carbon::parse($pageMaxDate);
+                    $state->save();
+                }
+
+                $page++;
+                
+            } while ($itemCount >= $limit);
+
+            if (!$state->is_full_synced && $totalProcessed > 0) {
+                $state->is_full_synced = true;
+                $state->full_sync_completed_at = now();
                 $state->save();
             }
-
-            $page++;
-            
-        } while ($itemCount >= $limit);
-
-        if (!$state->is_full_synced && $totalProcessed > 0) {
-            $state->is_full_synced = true;
-            $state->full_sync_completed_at = now();
-            $state->save();
-        }
-
-        Log::info("PullPaymentsJob: completed. Total processed: {$totalProcessed}");
+            */
         } finally {
             $lock->forceRelease();
+            Log::info("PullPaymentsJob finished");
         }
     }
 
