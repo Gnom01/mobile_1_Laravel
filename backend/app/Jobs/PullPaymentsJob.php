@@ -48,7 +48,7 @@ class PullPaymentsJob implements ShouldQueue
             $page = 1;
             $limit = 1000;
             $totalProcessed = 0;
-
+            Log::info("PullPaymentsJob started---5");
             do {
                 $resp = $crm->post('/CrmToMobileSync/getUserspaymentsschedulesMobile', [
                     'updatedSince' => $since,
@@ -72,7 +72,7 @@ class PullPaymentsJob implements ShouldQueue
                 $itemCount = is_array($items["body"]) ? count($items["body"]) : 0;
 
                 $pageMaxDate = null;
-
+                    Log::info("PullPaymentsJob started---6");
                 foreach ($items["body"] as $r) {
                     if (!is_array($r)) continue;
                     
@@ -82,7 +82,7 @@ class PullPaymentsJob implements ShouldQueue
                     if (isset($r['whenUpdated']) && (!$pageMaxDate || $r['whenUpdated'] > $pageMaxDate)) {
                         $pageMaxDate = $r['whenUpdated'];
                     }
-
+Log::info("PullPaymentsJob started---10");
                     UsersPaymentsSchedule::updateOrCreate(
                         ['usersPaymentsSchedulesID' => $id],
                         [
