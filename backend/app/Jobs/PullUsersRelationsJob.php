@@ -77,8 +77,9 @@ class PullUsersRelationsJob implements ShouldQueue
                     $id = (int)($r['usersRelationsID'] ?? 0);
                     if (!$id) continue;
 
-                    if (isset($r['whenUpdated']) && (!$pageMaxDate || $r['whenUpdated'] > $pageMaxDate)) {
-                        $pageMaxDate = $r['whenUpdated'];
+                    $validWhenUpdated = $this->validateDate($r['whenUpdated'] ?? '', null);
+                    if ($validWhenUpdated && (!$pageMaxDate || $validWhenUpdated > $pageMaxDate)) {
+                        $pageMaxDate = $validWhenUpdated;
                     }
 
                     UsersRelation::updateOrCreate(

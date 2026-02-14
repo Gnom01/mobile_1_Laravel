@@ -87,8 +87,9 @@ class PullUsersJob implements ShouldQueue
 
                     $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', now());
 
-                    if (isset($r['whenUpdated']) && (!$pageMaxDate || $r['whenUpdated'] > $pageMaxDate)) {
-                        $pageMaxDate = $r['whenUpdated'];
+                    $validWhenUpdated = $this->validateDate($r['whenUpdated'] ?? '', null);
+                    if ($validWhenUpdated && (!$pageMaxDate || $validWhenUpdated > $pageMaxDate)) {
+                        $pageMaxDate = $validWhenUpdated;
                     }
                     
                     \App\Models\CrmUser::updateOrCreate(

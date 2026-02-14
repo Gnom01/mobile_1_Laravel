@@ -71,8 +71,9 @@ class PullClientsJob implements ShouldQueue
                     $clientsID = (int)($r['clientsID'] ?? 0);
                     $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', now());
 
-                    if ($r['whenUpdated'] && (!$maxDate || $r['whenUpdated'] > $maxDate)) {
-                        $maxDate = $r['whenUpdated'];
+                    $validWhenUpdated = $this->validateDate($r['whenUpdated'] ?? '', null);
+                    if ($validWhenUpdated && (!$maxDate || $validWhenUpdated > $maxDate)) {
+                        $maxDate = $validWhenUpdated;
                     }
 
                     \App\Models\Client::updateOrCreate(
