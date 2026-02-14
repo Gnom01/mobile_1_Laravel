@@ -10,16 +10,6 @@ class Kernel extends ConsoleKernel
 {
     protected function schedule(Schedule $schedule): void
     {
-        Log::info('[KERNEL] schedule() called - registering crm:sync every 5 minutes');
-
-        $schedule->command('crm:sync')
-            ->everyFiveMinutes()
-            ->withoutOverlapping()
-            ->before(function () {
-                Log::info('[KERNEL] crm:sync is about to start');
-            })
-            ->after(function () {
-                Log::info('[KERNEL] crm:sync has finished');
-            });
+        // Laravel 11: scheduling is handled in routes/console.php
     }
 }

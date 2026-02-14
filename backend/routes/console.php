@@ -13,7 +13,7 @@ Log::info('[CONSOLE.PHP] routes/console.php loaded - registering crm:sync schedu
 
 Schedule::command('crm:sync')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(10)
     ->before(function () {
         Log::info('[SCHEDULER] crm:sync is about to start');
     })

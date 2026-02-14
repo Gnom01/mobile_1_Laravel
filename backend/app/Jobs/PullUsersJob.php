@@ -18,7 +18,7 @@ class PullUsersJob implements ShouldQueue
     {
         $syncService->sync([
             'resource'   => 'users',
-            'endpoint'   => '/Users/getUsersSynchMobile',
+            'endpoint'   => '/CrmToMobileSync/getUsersMobile',
             'model'      => CrmUser::class,
             'primaryKey'    => 'UsersID',
             'apiPrimaryKey' => 'usersID',
