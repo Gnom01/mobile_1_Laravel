@@ -25,6 +25,7 @@ class CrmSync extends Command
      */
     public function handle()
     {
+        \Illuminate\Support\Facades\Log::info('[CRM:SYNC] ===== crm:sync command started =====');
         $this->info('Starting CRM sync...');
 
         $jobs = [
@@ -36,14 +37,17 @@ class CrmSync extends Command
         ];
 
         foreach ($jobs as $name => $jobClass) {
+            \Illuminate\Support\Facades\Log::info("[CRM:SYNC] Starting job: {$name}");
             $this->info("Running {$name}...");
             $start = microtime(true);
 
             try {
                 $jobClass::dispatchSync();
                 $duration = round(microtime(true) - $start, 2);
+                \Illuminate\Support\Facades\Log::info("[CRM:SYNC] Job completed: {$name} in {$duration}s");
                 $this->info("{$name} completed in {$duration}s");
             } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error("[CRM:SYNC] Job FAILED: {$name} - " . $e->getMessage());
                 $this->error("{$name} failed: " . $e->getMessage());
                 \Illuminate\Support\Facades\Log::error("{$name} failed: " . $e->getMessage(), [
                     'exception' => $e,
@@ -51,6 +55,7 @@ class CrmSync extends Command
             }
         }
 
+        \Illuminate\Support\Facades\Log::info('[CRM:SYNC] ===== crm:sync command finished =====');
         $this->info('CRM sync finished.');
         return self::SUCCESS;
     }

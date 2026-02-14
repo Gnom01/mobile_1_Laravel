@@ -14,6 +14,8 @@ class AuthController
      */
     public function login(Request $request)
     {
+
+        //  \App\Jobs\PullUsersRelationsJob::dispatchSync();
         $request->validate([
             'Email' => 'required|email',
             'Password' => 'required',
@@ -67,7 +69,7 @@ class AuthController
     public function profile(Request $request)
     {
         // DEBUG: Trigger PullPaymentsJob locally
-        \App\Jobs\PullPaymentsJob::dispatchSync();
+        // \App\Jobs\PullUsersRelationsJob::dispatchSync();
         
         $guid = $request->input('guid');
 
