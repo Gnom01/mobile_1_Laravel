@@ -69,7 +69,7 @@ class AuthController
     public function profile(Request $request)
     {
         // DEBUG: Trigger PullPaymentsJob locally
-        // \App\Jobs\PullUsersRelationsJob::dispatchSync();
+
         
         $guid = $request->input('guid');
 

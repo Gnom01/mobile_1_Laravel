@@ -12,5 +12,6 @@ class SyncState extends Model
         'is_full_synced' => 'boolean',
         'full_sync_started_at' => 'datetime',
         'full_sync_completed_at' => 'datetime',
+        'last_synced_id' => 'integer',
     ];
 }

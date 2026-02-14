@@ -3,6 +3,13 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
+use App\Jobs\PullClientsJob;
+use App\Jobs\PullUsersJob;
+use App\Jobs\PullPaymentsJob;
+use App\Jobs\PullUsersRelationsJob;
+use App\Jobs\PushOutboxJob;
+use Throwable;
 
 class CrmSync extends Command
 {
@@ -18,44 +25,44 @@ class CrmSync extends Command
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = 'Main CRM synchronization command';
 
     /**
      * Execute the console command.
      */
     public function handle()
     {
-        \Illuminate\Support\Facades\Log::info('[CRM:SYNC] ===== crm:sync command started =====');
+        Log::info('[CRM:SYNC] ===== crm:sync command started =====');
         $this->info('Starting CRM sync...');
 
         $jobs = [
-            'PullClientsJob' => \App\Jobs\PullClientsJob::class,
-            'PullUsersJob' => \App\Jobs\PullUsersJob::class,
-            'PullPaymentsJob' => \App\Jobs\PullPaymentsJob::class,
-            'PullUsersRelationsJob' => \App\Jobs\PullUsersRelationsJob::class,
-            'PushOutboxJob' => \App\Jobs\PushOutboxJob::class,
+            'PullClientsJob'        => PullClientsJob::class,
+            'PullUsersJob'          => PullUsersJob::class,
+            'PullPaymentsJob'       => PullPaymentsJob::class,
+            'PullUsersRelationsJob' => PullUsersRelationsJob::class,
+            'PushOutboxJob'         => PushOutboxJob::class,
         ];
 
         foreach ($jobs as $name => $jobClass) {
-            \Illuminate\Support\Facades\Log::info("[CRM:SYNC] Starting job: {$name}");
+            Log::info("[CRM:SYNC] Starting job: {$name}");
             $this->info("Running {$name}...");
             $start = microtime(true);
 
             try {
                 $jobClass::dispatchSync();
                 $duration = round(microtime(true) - $start, 2);
-                \Illuminate\Support\Facades\Log::info("[CRM:SYNC] Job completed: {$name} in {$duration}s");
+                Log::info("[CRM:SYNC] Job completed: {$name} in {$duration}s");
                 $this->info("{$name} completed in {$duration}s");
-            } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::error("[CRM:SYNC] Job FAILED: {$name} - " . $e->getMessage());
+            } catch (Throwable $e) {
+                Log::error("[CRM:SYNC] Job FAILED: {$name} - " . $e->getMessage());
                 $this->error("{$name} failed: " . $e->getMessage());
-                \Illuminate\Support\Facades\Log::error("{$name} failed: " . $e->getMessage(), [
+                Log::error("{$name} failed: " . $e->getMessage(), [
                     'exception' => $e,
                 ]);
             }
         }
 
-        \Illuminate\Support\Facades\Log::info('[CRM:SYNC] ===== crm:sync command finished =====');
+        Log::info('[CRM:SYNC] ===== crm:sync command finished =====');
         $this->info('CRM sync finished.');
         return self::SUCCESS;
     }

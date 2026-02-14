@@ -4,144 +4,60 @@ namespace App\Jobs;
 
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use App\Models\Client;
+use App\Services\CrmSyncService;
 
 class PullClientsJob implements ShouldQueue
 {
     use Queueable;
 
-    /**
-     * Create a new job instance.
-     */
-    public function __construct()
+    public $timeout = 3600;
+
+    public function handle(CrmSyncService $syncService)
     {
-        //
+        $syncService->sync([
+            'resource'   => 'clients',
+            'endpoint'   => '/Clients/getPage',
+            'model'      => Client::class,
+            'primaryKey'    => 'ClientsID',
+            'apiPrimaryKey' => 'clientsID',
+            'pageSize'      => 500,
+            'pageSizeParam' => 'limit',
+            'responseKey'   => 'body',
+            'extraParams' => [
+                'current_LocalizationsID' => '0',
+            ],
+            'fieldMap' => function (array $r) use ($syncService) {
+                return [
+                    'Parent_ClientsID'      => (int)($r['parent_ClientsID'] ?? 0),
+                    'GUID'                  => (string)($r['guid'] ?? ''),
+                    'ClientName'            => (string)($r['clientName'] ?? ''),
+                    'NIP'                   => (string)($r['nip'] ?? ''),
+                    'DIK'                   => (string)($r['dik'] ?? ''),
+                    'City'                  => (string)($r['city'] ?? ''),
+                    'ZipCode'               => (string)($r['zipCode'] ?? ''),
+                    'Address'               => (string)($r['address'] ?? ''),
+                    'Longitude'             => (float)($r['longitude'] ?? 0),
+                    'Latitude'              => (float)($r['latitude'] ?? 0),
+                    'Phone'                 => (string)($r['phone'] ?? ''),
+                    'Logo'                  => (string)($r['logo'] ?? ''),
+                    'URL'                   => (string)($r['url'] ?? ''),
+                    'EMAIL'                 => (string)($r['email'] ?? ''),
+                    'TransferID'            => 0,
+                    'Cancelled'             => (int)($r['cancelled'] ?? 0),
+                    'Admin'                 => (int)($r['admin'] ?? 0),
+                    'WhenInserted'          => $syncService->validateDate($r['whenInserted'] ?? '', now()),
+                    'WhoInserted_UsersID'   => (int)($r['whoInserted_UsersID'] ?? 0),
+                    'WhenUpdated'           => $syncService->validateDate($r['whenUpdated'] ?? '', now()),
+                    'WhoUpdated_UsersID'    => (int)($r['whoUpdated_UsersID'] ?? 0),
+                    'Regon'                 => (string)($r['regon'] ?? ''),
+                    'ContractHeader'        => (string)($r['contractHeader'] ?? ''),
+                    'ClientsCyti'           => (string)($r['clientsCyti'] ?? ''),
+                    'P24_Login'             => (string)($r['P24_Login'] ?? ''),
+                    'P24_CRC'               => (string)($r['P24_CRC'] ?? ''),
+                    'P24_Reports'           => (string)($r['P24_Reports'] ?? ''),
+                ];
+            },
+        ]);
     }
-
-    /**
-     * Execute the job.
-     */
-    public function handle(\App\Services\CrmClient $crm)
-    {
-        \Illuminate\Support\Facades\Log::info("PullClientsJob started");
-
-        $lock = \Illuminate\Support\Facades\Cache::lock('sync:clients', 3600);
-
-        if (!$lock->get()) {
-            \Illuminate\Support\Facades\Log::warning('PullClientsJob: Already running, skipping.');
-            return;
-        }
-
-        try {
-            
-            $state = \App\Models\SyncState::firstOrCreate(
-                ['resource' => 'clients'],
-                ['last_sync_at' => null, 'is_full_synced' => false]
-            );
-
-            if (!$state->is_full_synced) {
-                $since = null;
-                $state->full_sync_started_at = now();
-                $state->save();
-            } else {
-                $since = $state->last_sync_at 
-                    ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s') 
-                    : null;
-            }
-
-            $page = 1;
-            $limit = 500;
-            $maxDate = null;
-            $totalProcessed = 0;
-
-            do {
-                $resp = $crm->post('/Clients/getPage', [
-                    'updatedSince' => $since,
-                    'limit' => $limit,
-                    'page' => $page,
-                    'order' => 'WhenUpdated ASC',
-                    'current_LocalizationsID' => "0",
-                ])->json();
-
-                $items = $resp['body'] ?? $resp ?? [];
-                $itemCount = is_array($items) ? count($items) : 0;
-                
-                foreach ($items as $r) {
-                    if (!is_array($r)) continue;
-
-                    $clientsID = (int)($r['clientsID'] ?? 0);
-                    $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', now());
-
-                    $validWhenUpdated = $this->validateDate($r['whenUpdated'] ?? '', null);
-                    if ($validWhenUpdated && (!$maxDate || $validWhenUpdated > $maxDate)) {
-                        $maxDate = $validWhenUpdated;
-                    }
-
-                    \App\Models\Client::updateOrCreate(
-                        ['ClientsID' => $clientsID], 
-                        [
-                            'Parent_ClientsID' => (int)($r['parent_ClientsID'] ?? 0),
-                            'GUID' => (string)($r['guid'] ?? ''),
-                            'ClientName' => (string)($r['clientName'] ?? ''),
-                            'NIP' => (string)($r['nip'] ?? ''),
-                            'DIK' => (string)($r['dik'] ?? ''),
-                            'City' => (string)($r['city'] ?? ''),
-                            'ZipCode' => (string)($r['zipCode'] ?? ''),
-                            'Address' => (string)($r['address'] ?? ''),
-                            'Longitude' => (float)($r['longitude'] ?? 0),
-                            'Latitude' => (float)($r['latitude'] ?? 0),
-                            'Phone' => (string)($r['phone'] ?? ''),
-                            'Logo' => (string)($r['logo'] ?? ''),
-                            'URL' => (string)($r['url'] ?? ''),
-                            'EMAIL' => (string)($r['email'] ?? ''),
-                            'TransferID' => 0,
-                            'Cancelled' => (int)($r['cancelled'] ?? 0),
-                            'Admin' => (int)($r['admin'] ?? 0),
-                            'WhenInserted' => $this->validateDate($r['whenInserted'] ?? '', now()),
-                            'WhoInserted_UsersID' => (int)($r['whoInserted_UsersID'] ?? 0),
-                            'WhenUpdated' => $whenUpdated,
-                            'WhoUpdated_UsersID' => (int)($r['whoUpdated_UsersID'] ?? 0),
-                            'Regon' => (string)($r['regon'] ?? ''),
-                            'ContractHeader' => (string)($r['contractHeader'] ?? ''),
-                            'ClientsCyti' => (string)($r['clientsCyti'] ?? ''),
-                            'P24_Login' => (string)($r['P24_Login'] ?? ''),
-                            'P24_CRC' => (string)($r['P24_CRC'] ?? ''),
-                            'P24_Reports' => (string)($r['P24_Reports'] ?? ''),
-                        ]
-                    );
-                    
-                    $totalProcessed++;
-                }
-
-                $page++;
-                
-            } while ($itemCount >= $limit);
-
-            if ($maxDate) {
-                $state->last_sync_at = \Carbon\Carbon::parse($maxDate);
-            }
-
-            if (!$state->is_full_synced) {
-                $state->is_full_synced = true;
-                $state->full_sync_completed_at = now();
-            }
-
-            $state->save();
-            
-        } finally {
-            $lock->forceRelease();
-            \Illuminate\Support\Facades\Log::info("PullClientsJob finished");
-        }
-    }
-
-    private function validateDate($date, $default = null)
-    {
-        if (empty($date)) {
-            return $default;
-        }
-        if (str_starts_with($date, '0000') || str_starts_with($date, '-')) {
-            return $default;
-        }
-        return $date;
-    }
-
 }
