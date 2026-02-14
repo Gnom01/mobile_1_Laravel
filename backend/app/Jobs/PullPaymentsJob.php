@@ -26,6 +26,14 @@ class PullPaymentsJob implements ShouldQueue
                 'current_LocalizationsID' => '0',
             ],
             'fieldMap' => function (array $r) use ($syncService) {
+                $paymentDate = $syncService->validateDate($r['paymentDate'] ?? '', null);
+                if (empty($paymentDate)) {
+                    \Illuminate\Support\Facades\Log::warning('[SYNC:payments] empty paymentDate', [
+                        'usersPaymentsSchedulesID' => (int)($r['usersPaymentsSchedulesID'] ?? 0),
+                        'usersID' => (int)($r['usersID'] ?? 0)
+                    ]);
+                }
+
                 return [
                     'usersID'                   => (int)($r['usersID'] ?? 0),
                     'contractsID'               => (int)($r['contractsID'] ?? 0),
@@ -39,7 +47,7 @@ class PullPaymentsJob implements ShouldQueue
                     'productAvailableToDate'    => (string)($r['productAvailableToDate'] ?? ''),
                     'lessonsAreCounted'         => (int)($r['lessonsAreCounted'] ?? 0),
                     'lessonsRemainingForUse'    => (int)($r['lessonsRemainingForUse'] ?? 0),
-                    'paymentDate'               => $syncService->validateDate($r['paymentDate'] ?? '', null),
+                    'paymentDate'               => $paymentDate,
                     'paymentAmount'             => (float)($r['paymentAmount'] ?? 0),
                     'paymentStatusesDVID'       => (int)($r['paymentStatusesDVID'] ?? 1),
                     'paymentMethodDVIDList'     => (string)($r['paymentMethodDVIDList'] ?? '0'),
