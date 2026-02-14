@@ -47,8 +47,6 @@ class AuthController
         // Utworz nowy token
         $token = $user->createToken('api-token')->plainTextToken;
 
-        // DEBUG: Trigger PullPaymentsJob locally
-        \App\Jobs\PullPaymentsJob::dispatchSync();
 
         return response()->json([
             'success' => true,
@@ -68,7 +66,9 @@ class AuthController
      */
     public function profile(Request $request)
     {
-       
+        // DEBUG: Trigger PullPaymentsJob locally
+        \App\Jobs\PullPaymentsJob::dispatchSync();
+        
         $guid = $request->input('guid');
 
         if ($guid) {

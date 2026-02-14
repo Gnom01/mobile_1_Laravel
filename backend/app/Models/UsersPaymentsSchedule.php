@@ -7,8 +7,9 @@ use Illuminate\Database\Eloquent\Model;
 class UsersPaymentsSchedule extends Model
 {
     protected $table = 'userspaymentsschedules';
-    protected $primaryKey = 'id';
-    public $incrementing = true;
+    protected $primaryKey = 'usersPaymentsSchedulesID';
+    public $incrementing = false;
+    protected $keyType = 'int';
     public $timestamps = false;
     protected $guarded = [];
 
@@ -16,6 +17,8 @@ class UsersPaymentsSchedule extends Model
         'paymentDate' => 'date',
         'lastPaymentDate' => 'date',
         'whenInserted' => 'datetime',
+        'orderValue' => 'integer', // Assuming orderValue is an attribute that needs casting
+        'leftToPaid' => 'decimal:2', // Casting the leftToPaid attribute
         'whenUpdated' => 'datetime',
         'paymentAmount' => 'decimal:2',
         'amountPaid' => 'decimal:2',
