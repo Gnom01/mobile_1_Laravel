@@ -14,7 +14,6 @@ class PaymentController extends Controller
     public function getSchedule(Request $request)
     {
 
-        \App\Jobs\PullPaymentsJob::dispatchSync();
 
         $user = $request->user();
 
