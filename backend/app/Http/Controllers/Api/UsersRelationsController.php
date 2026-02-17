@@ -29,7 +29,7 @@ class UsersRelationsController extends Controller
                     ->limit(1);
             })
             ->where('ur.Cancelled', 0)
-            ->select('u.fullName', 'u.FirstName', 'u.LastName', 'u.DateOfBirdth', 'u.Pesel', 'u.address', 'u.Phone', 'u.Email', 'u.guid')
+            ->select('u.fullName', 'u.FirstName', 'u.LastName', 'u.DateOfBirdth', 'u.Pesel', 'u.address', 'u.Phone', 'u.Email', 'u.guid', 'u.Street', 'u.Building', 'u.Flat', 'u.City', 'u.PostalCode')
             ->get();
 
         return response()->json($relatedUsers);
