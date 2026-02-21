@@ -5,6 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Jobs\PullUsersJob;
+use App\Jobs\PullUsersRelationsJob;
+use App\Jobs\PullPaymentsRealJob;
+use App\Jobs\PullPaymentsItemsJob;
+use App\Jobs\PullLocalizationsJob;
+use App\Jobs\PullContractsJob;
 
 class UsersRelationsController extends Controller
 {
@@ -16,6 +22,10 @@ class UsersRelationsController extends Controller
      */
     public function getRelatedUsers($parentGuid)
     {
+        // Wywołanie jobów synchronizacji
+
+        PullPaymentsItemsJob::dispatchSync();
+
         $relatedUsers = DB::table('usersrelations as ur')
             ->leftJoin('users as u', function ($join) {
                 $join->on('u.UsersID', '=', 'ur.UsersID')

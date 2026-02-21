@@ -61,13 +61,16 @@ class CrmAuthService
         }
 
         // DOPASUJ te klucze do odpowiedzi Twojego CRM
-        $access = $resp['access_token'] ?? $resp['token'] ?? null;
-        $refresh = $resp['refresh_token'] ?? null;
-        $expiresIn = (int)($resp['expires_in'] ?? 3600);
+        $access = $resp['token'] ?? $resp['access_token'] ?? $resp['body']['token'] ?? $resp['message']['token'] ?? null;
+        $refresh = $resp['refresh_token'] ?? $resp['body']['refresh_token'] ?? null;
+        $expiresIn = (int)($resp['expires_in'] ?? $resp['body']['expires_in'] ?? 3600);
 
         if (!$access) {
-            Log::error('CRM Auth: Login failed - missing access_token in response.', ['response' => $resp]);
-            throw new \RuntimeException('CRM login: missing access_token/token');
+            Log::error('CRM Auth: Login failed - missing access_token in response.', [
+                'available_keys' => array_keys($resp),
+                'response_snippet' => substr(json_encode($resp), 0, 500)
+            ]);
+            throw new \RuntimeException('CRM login: missing access_token/token (dostępne klucze: ' . implode(', ', array_keys($resp)) . ')');
         }
 
         Log::info('CRM Auth: Login successful, token stored. Expires in: ' . $expiresIn . 's');

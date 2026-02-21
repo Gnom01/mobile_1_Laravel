@@ -7,6 +7,10 @@ use Illuminate\Support\Facades\Log;
 use App\Jobs\PullClientsJob;
 use App\Jobs\PullUsersJob;
 use App\Jobs\PullPaymentsJob;
+use App\Jobs\PullPaymentsRealJob;
+use App\Jobs\PullPaymentsItemsJob;
+use App\Jobs\PullLocalizationsJob;
+use App\Jobs\PullContractsJob;
 use App\Jobs\PullUsersRelationsJob;
 use App\Jobs\PushOutboxJob;
 use Throwable;
@@ -39,6 +43,10 @@ class CrmSync extends Command
             'PullClientsJob'        => PullClientsJob::class,
             'PullUsersJob'          => PullUsersJob::class,
             'PullPaymentsJob'       => PullPaymentsJob::class,
+            'PullPaymentsRealJob'   => PullPaymentsRealJob::class,
+            'PullPaymentsItemsJob'  => PullPaymentsItemsJob::class,
+            'PullLocalizationsJob'  => PullLocalizationsJob::class,
+            'PullContractsJob'      => PullContractsJob::class,
             'PullUsersRelationsJob' => PullUsersRelationsJob::class,
             'PushOutboxJob'         => PushOutboxJob::class,
         ];
