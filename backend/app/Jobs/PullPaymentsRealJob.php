@@ -21,7 +21,6 @@ class PullPaymentsRealJob implements ShouldQueue
             'model'      => Payment::class,
             'primaryKey' => 'paymentsID',
             'pageSize'   => 1000,
-            'pageSizeParam' => 'limit',
             'responseKey'   => 'body',
             'extraParams' => [
                 'current_LocalizationsID' => '0',

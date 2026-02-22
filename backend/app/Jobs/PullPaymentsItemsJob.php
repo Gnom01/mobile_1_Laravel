@@ -20,7 +20,6 @@ class PullPaymentsItemsJob implements ShouldQueue
             'endpoint'   => '/CrmToMobileSync/getPaymentsItemsMobile',
             'model'      => PaymentItem::class,
             'primaryKey' => 'paymentsItemsID',
-            'pageSizeParam' => 'limit',
             'pageSize'   => 1000,
             'responseKey'   => 'body',
             'extraParams' => [

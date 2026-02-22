@@ -21,7 +21,6 @@ class PullLocalizationsJob implements ShouldQueue
             'model'      => Localization::class,
             'primaryKey' => 'LocalizationsID',
             'pageSize'   => 1000,
-            'pageSizeParam' => 'limit',
             'responseKey'   => 'body',
             'extraParams' => [
                 'current_LocalizationsID' => '0',

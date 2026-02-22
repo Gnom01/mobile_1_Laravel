@@ -20,7 +20,6 @@ class PullContractsJob implements ShouldQueue
             'endpoint'   => '/CrmToMobileSync/getContractsMobile',
             'model'      => Contract::class,
             'primaryKey' => 'contractsID',
-            'pageSizeParam' => 'limit',
             'pageSize'   => 1000,
             'responseKey'   => 'body',
             'extraParams' => [
