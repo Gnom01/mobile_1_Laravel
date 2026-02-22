@@ -177,7 +177,7 @@ class CrmSyncService
                 return ['status' => 'partial', 'processed' => $totalProcessed, 'last_id' => $lastId, 'page' => $page - 1];
             }
 
-        } while ($itemCount >= $pageSize);
+        } while ($itemCount > 0);
 
         // Full sync complete
         if ($totalProcessed > 0 || $lastId > 0) {
