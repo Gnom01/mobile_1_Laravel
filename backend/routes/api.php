@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\CrmUserController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\UsersRelationsController;
+use App\Http\Controllers\Api\DictionaryController;
 
 // ───────────────────────────────────────────────
 // Public routes (no authentication required)
@@ -29,4 +30,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/users/{id}', [CrmUserController::class, 'update']);
     Route::get('/payments/schedule', [PaymentController::class, 'getSchedule']);
     Route::get('/users-relations/{parentGuid}', [UsersRelationsController::class, 'getRelatedUsers']);
+    Route::get('/dictionaries', [DictionaryController::class, 'index']);
 });
