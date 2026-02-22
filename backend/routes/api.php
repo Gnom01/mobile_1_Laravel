@@ -29,6 +29,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Users
     Route::put('/users/{id}', [CrmUserController::class, 'update']);
     Route::get('/payments/schedule', [PaymentController::class, 'getSchedule']);
+    Route::get('/payments/history/{parentGuid}', [PaymentController::class, 'getPaymentHistory']);
     Route::get('/users-relations/{parentGuid}', [UsersRelationsController::class, 'getRelatedUsers']);
     Route::get('/dictionaries', [DictionaryController::class, 'index']);
 });
