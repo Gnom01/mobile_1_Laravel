@@ -43,5 +43,9 @@ return [
     'password' => env('CRM_PASSWORD'),
 ],
 
+    'serwersms' => [
+        'token'  => env('SERWERSMS_TOKEN'),
+        'sender' => env('SERWERSMS_SENDER', null),
+    ],
 
 ];
