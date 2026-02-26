@@ -99,6 +99,7 @@ class AuthController
         $email = $request->input('Email');
         $phone = $request->input('Phone');
         $localizationId = $request->input('current_LocalizationsID', 3);
+        
 
         // Check if user already exists locally
         if (CrmUser::where('login', $email)->orWhere('Email', $email)->exists()) {
