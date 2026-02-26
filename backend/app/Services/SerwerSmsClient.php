@@ -25,14 +25,17 @@ class SerwerSmsClient
             'text'    => $message,
             'details' => true,
             'utf'     => true,
-            'test'    => $test,
+            'flash'   => false,
+            'test'    => false,
         ];
 
         if (!empty($sender)) {
             $payload['sender'] = $sender;
         }
 
-        $resp = Http::withHeaders([
+        $resp = Http::withOptions([
+            'verify' => app()->environment('local') ? false : true,
+        ])->withHeaders([
             'Authorization' => "Bearer {$token}",
         ])->asForm()->post('https://api2.serwersms.pl/messages/send_sms.json', $payload);
 

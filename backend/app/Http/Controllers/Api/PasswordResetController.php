@@ -9,17 +9,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
-class OtpController
+class PasswordResetController
 {
-    // ─────────────────────────────────────────────
-    // 1. Request OTP — POST /auth/otp/request
-    // ─────────────────────────────────────────────
-
     /**
-     * Generate OTP code, store its hash, and send SMS via SerwerSMS.
-     * Always returns {"ok": true} regardless of whether the phone exists (anti-enumeration).
+     * Start password reset procedure - send OTP via SMS.
      */
-    public function requestOtp(Request $request, SerwerSmsClient $sms)
+    public function requestReset(Request $request, SerwerSmsClient $sms)
     {
         $request->validate([
             'phone' => 'required|string|max:25',
@@ -27,7 +22,6 @@ class OtpController
 
         $phone = $this->normalizePhone($request->string('phone'));
 
-        // Anti-enumeration: if user doesn't exist, still return ok
         $user = CrmUser::where(function ($query) use ($phone) {
             $query->whereRaw('REPLACE(Phone, " ", "") = ?', [$phone])
                   ->orWhereRaw('REPLACE(Phone, " ", "") = ?', ['+48' . $phone])
@@ -35,8 +29,8 @@ class OtpController
         })->first();
 
         if (!$user) {
-            Log::info('OTP requested for unknown phone', ['phone' => $phone]);
-            return response()->json(['ok' => true]);
+            Log::info('Password reset requested for unknown phone', ['phone' => $phone]);
+            return response()->json(['ok' => true]); // anti-enumeration
         }
 
         // Rate limit: max 3 OTP per phone in last 15 minutes
@@ -61,18 +55,17 @@ class OtpController
             'attempts'   => 0,
         ]);
 
-        $msg = "Kod logowania: {$code}. Wazny 5 min.";
+        $msg = "Kod do resetu hasla: {$code}. Wazny 5 min.";
 
         // In local env, use test mode (no actual SMS sent)
         $res = $sms->sendOtp($phone, $msg, app()->environment('local'));
 
-        // Store SerwerSMS message ID if available
         $messageId = $res['data']['items'][0]['id'] ?? null;
         if ($messageId) {
             $otp->update(['sent_message_id' => $messageId]);
         }
 
-        Log::info('OTP sent', [
+        Log::info('Password reset OTP sent', [
             'phone'      => $phone,
             'sms_ok'     => $res['ok'],
             'message_id' => $messageId,
@@ -81,25 +74,20 @@ class OtpController
         return response()->json(['ok' => true]);
     }
 
-    // ─────────────────────────────────────────────
-    // 2. Verify OTP — POST /auth/otp/verify
-    // ─────────────────────────────────────────────
-
     /**
-     * Verify OTP code. On success: invalidate OTP, create Sanctum token,
-     * and return token + user info + must_set_password flag.
+     * Confirm password reset code and set new password.
      */
-    public function verifyOtp(Request $request)
+    public function confirmReset(Request $request)
     {
         $request->validate([
-            'phone' => 'required|string|max:25',
-            'code'  => 'required|string|size:6',
+            'phone'    => 'required|string|max:25',
+            'code'     => 'required|string|size:6',
+            'password' => 'required|string|min:8',
         ]);
 
         $phone = $this->normalizePhone($request->string('phone'));
         $code  = (string) $request->string('code');
 
-        // Find latest non-expired OTP for this phone
         $otp = OtpRequest::where('phone', $phone)
             ->where('expires_at', '>', now())
             ->latest()
@@ -112,7 +100,6 @@ class OtpController
             ], 422);
         }
 
-        // Max 5 attempts
         if ($otp->attempts >= 5) {
             return response()->json([
                 'ok'    => false,
@@ -122,7 +109,6 @@ class OtpController
 
         $otp->increment('attempts');
 
-        // Verify code against hash
         if (!Hash::check($code, $otp->code_hash)) {
             return response()->json([
                 'ok'    => false,
@@ -130,7 +116,6 @@ class OtpController
             ], 422);
         }
 
-        // Find the user
         $user = CrmUser::where(function ($query) use ($phone) {
             $query->whereRaw('REPLACE(Phone, " ", "") = ?', [$phone])
                   ->orWhereRaw('REPLACE(Phone, " ", "") = ?', ['+48' . $phone])
@@ -144,76 +129,27 @@ class OtpController
             ], 404);
         }
 
-        // Invalidate OTP (one-time use)
         $otp->update(['expires_at' => now()]);
 
-        // Revoke previous tokens & create new one
+        // Revoke token 
         $user->tokens()->delete();
-        $token = $user->createToken('mobile-otp')->plainTextToken;
-
-        Log::info('OTP verified, token created', [
-            'phone'   => $phone,
-            'user_id' => $user->UsersID,
-        ]);
-
-        return response()->json([
-            'ok'                => true,
-            'token'             => $token,
-            'must_set_password' => (bool) ($user->changePassword ?? false),
-            'user'              => [
-                'guid'       => $user->guid,
-                'email'      => $user->Email,
-                'first_name' => $user->FirstName,
-                'last_name'  => $user->LastName,
-            ],
-        ]);
-    }
-
-    // ─────────────────────────────────────────────
-    // 3. Set Password — POST /auth/password/set
-    // ─────────────────────────────────────────────
-
-    /**
-     * Set a new password for the authenticated user.
-     * Requires auth:sanctum middleware.
-     */
-    public function setPassword(Request $request)
-    {
-        $request->validate([
-            'password' => 'required|string|min:8',
-        ]);
-
-        $user = $request->user();
+        
         $user->Password = bcrypt($request->string('password'));
         $user->changePassword = 0;
         $user->save();
 
-        Log::info('Password set via OTP flow', [
+        Log::info('Password reset successful via OTP flow', [
             'user_id' => $user->UsersID,
         ]);
 
         return response()->json(['ok' => true]);
     }
 
-    // ─────────────────────────────────────────────
-    // Helpers
-    // ─────────────────────────────────────────────
-
-    /**
-     * Normalize phone number to 9-digits format (removes +48).
-     */
     private function normalizePhone(string $phone): string
     {
         $phone = preg_replace('/[\s\-\(\)]+/', '', $phone);
-
-        if (str_starts_with($phone, '+48')) {
-            return substr($phone, 3);
-        }
-
-        if (str_starts_with($phone, '48') && strlen($phone) === 11) {
-            return substr($phone, 2);
-        }
-
+        if (str_starts_with($phone, '+48')) return substr($phone, 3);
+        if (str_starts_with($phone, '48') && strlen($phone) === 11) return substr($phone, 2);
         return $phone;
     }
 }

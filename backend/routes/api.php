@@ -8,13 +8,20 @@ use App\Http\Controllers\Api\OtpController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\UsersRelationsController;
 use App\Http\Controllers\Api\DictionaryController;
+use App\Http\Controllers\Api\PasswordResetController;
 
 // ───────────────────────────────────────────────
 // Public routes (no authentication required)
 // ───────────────────────────────────────────────
 Route::post('/login', [AuthController::class, 'login']);
-Route::post('/auth/otp/request', [OtpController::class, 'requestOtp']);
-Route::post('/auth/otp/verify', [OtpController::class, 'verifyOtp']);
+Route::post('/register', [AuthController::class, 'register']);
+Route::post('/sms/send', [OtpController::class, 'requestOtp']);
+Route::post('/sms/verify', [OtpController::class, 'verifyOtp']);
+Route::post('/password/reset', [PasswordResetController::class, 'requestReset']);
+Route::post('/password/reset/confirm', [PasswordResetController::class, 'confirmReset']);
+
+Route::post('/auth/otp/request', [OtpController::class, 'requestOtp']); // deprecated
+Route::post('/auth/otp/verify', [OtpController::class, 'verifyOtp']); // deprecated
 
 // ───────────────────────────────────────────────
 // Protected routes (require authentication token)
