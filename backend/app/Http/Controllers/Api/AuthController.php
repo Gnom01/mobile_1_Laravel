@@ -100,8 +100,8 @@ class AuthController
         $phone = $request->input('Phone');
         $localizationId = $request->input('current_LocalizationsID', 3);
         
-
         // Check if user already exists locally
+        
         if (CrmUser::where('login', $email)->orWhere('Email', $email)->exists()) {
             throw ValidationException::withMessages([
                 'Email' => ['A user with this email already exists.'],
