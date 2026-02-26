@@ -15,6 +15,7 @@ class CrmClient
     }
 
     public function post(string $url, array $data = [])
+    
     {
         return $this->request('post', $url, $data);
     }
