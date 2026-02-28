@@ -48,4 +48,8 @@ return [
         'sender' => env('SERWERSMS_SENDER', null),
     ],
 
+    'sms' => [
+        'app_hash' => env('SMS_APP_HASH', ''),
+    ],
+
 ];

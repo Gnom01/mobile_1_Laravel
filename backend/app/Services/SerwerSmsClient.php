@@ -25,7 +25,7 @@ class SerwerSmsClient
             'text'    => $message,
             'details' => true,
             'utf'     => true,
-            'flash'   => false,
+            'flash'   => true,
             'test'    => false,
         ];
 
