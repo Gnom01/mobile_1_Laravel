@@ -21,7 +21,7 @@ class AuthController
         ]);
 
         $email = strtolower(trim($request->input('Email')));
-        $password = (string) $request->input('Password');
+        $password = trim((string) $request->input('Password'));
 
         $user = CrmUser::where('login', $email)
             ->orWhere('Email', $email)
@@ -204,7 +204,7 @@ class AuthController
         ]);
 
         try {
-            $crmResp = $crmClient->post('/Users/setUsersForLocalization', $crmPayload);
+            $crmResp = $crmClient->post('/CrmToMobileSync/setUsersForLocalization', $crmPayload);
             $crmData = $crmResp->json();
 
             \Illuminate\Support\Facades\Log::info('CRM registration response', [
@@ -360,3 +360,8 @@ class AuthController
         ]);
     }
 }
+
+
+
+
+
