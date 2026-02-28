@@ -19,6 +19,7 @@ class DictionaryController extends Controller
         $query = Dictionary::query()->where('Cancelled', 0);
 
         if ($request->has('dictionaryName')) {
+            
             $query->where('DictionaryName', $request->get('dictionaryName'));
         }
 
