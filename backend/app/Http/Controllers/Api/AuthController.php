@@ -14,30 +14,64 @@ class AuthController
      */
     public function login(Request $request)
     {
-
-        //  \App\Jobs\PullUsersRelationsJob::dispatchSync();
         $request->validate([
             'Email' => 'required|email',
             'Password' => 'required',
             'current_LocalizationsID' => 'sometimes|integer',
         ]);
 
-        $email = $request->input('Email');
-        $password = $request->input('Password');
+        $email = strtolower(trim($request->input('Email')));
+        $password = (string) $request->input('Password');
 
         $user = CrmUser::where('login', $email)
             ->orWhere('Email', $email)
             ->first();
 
-        // Match CRM's authentication logic: try password_verify first, then plaintext comparison
-        if (!$user || !(Hash::check($password, $user->Password) || $user->Password === $password)) {
-            \Illuminate\Support\Facades\Log::warning('Login failed', [
+        // Check if user exists
+        if (!$user) {
+            \Illuminate\Support\Facades\Log::warning('Login failed: user not found', [
                 'email' => $email,
-                'user_exists' => (bool) $user,
             ]);
             throw ValidationException::withMessages([
                 'Email' => ['The provided credentials are incorrect.'],
             ]);
+        }
+
+        $storedHash = (string) $user->Password;
+        $isCorrect = false;
+
+        // 1. Check Bcrypt / Argon2 (Laravel defaults)
+        if (str_starts_with($storedHash, '$2y$') || str_starts_with($storedHash, '$2a$') || str_starts_with($storedHash, '$argon2')) {
+            $isCorrect = Hash::check($password, $storedHash);
+        }
+        // 2. Check MD5 (Legacy CRM)
+        elseif (preg_match('/^[a-f0-9]{32}$/i', $storedHash)) {
+            $isCorrect = hash_equals(strtolower($storedHash), md5($password));
+        }
+        // 3. Check SHA1 (Legacy CRM)
+        elseif (preg_match('/^[a-f0-9]{40}$/i', $storedHash)) {
+            $isCorrect = hash_equals(strtolower($storedHash), sha1($password));
+        }
+        // 4. Check Plaintext (as fallback, matching original logic)
+        else {
+            $isCorrect = hash_equals($storedHash, $password);
+        }
+
+        if (!$isCorrect) {
+            \Illuminate\Support\Facades\Log::warning('Login failed: incorrect password', [
+                'email' => $email,
+                'user_id' => $user->UsersID,
+            ]);
+            throw ValidationException::withMessages([
+                'Email' => ['The provided credentials are incorrect.'],
+            ]);
+        }
+
+        // Auto-migrate legacy/plaintext password to Bcrypt
+        if (!str_starts_with($storedHash, '$2y$') && !str_starts_with($storedHash, '$argon2')) {
+            $user->Password = Hash::make($password);
+            $user->save();
+            \Illuminate\Support\Facades\Log::info('Password migrated to Bcrypt', ['user_id' => $user->UsersID]);
         }
 
         \Illuminate\Support\Facades\Log::info('Login successful', [
@@ -96,9 +130,13 @@ class AuthController
             'current_LocalizationsID' => 'nullable|integer',
         ]);
 
-        $email = $request->input('Email');
+        $email = strtolower(trim($request->input('Email')));
         $phone = $request->input('Phone');
+        $password = (string) $request->input('Password');
         $localizationId = $request->input('current_LocalizationsID', 3);
+
+        // Update request with normalized email
+        $request->merge(['Email' => $email]);
         
         // Check if user already exists locally
         
@@ -121,7 +159,7 @@ class AuthController
             'email'                         => $email,
             'address'                       => '',
             'login'                         => $email,
-            'password'                      => $request->input('Password'),
+            'password'                      => $password,
             'phone'                         => $phone,
             'city'                          => '',
             'default_LocalizationsID'       => (string) $localizationId,

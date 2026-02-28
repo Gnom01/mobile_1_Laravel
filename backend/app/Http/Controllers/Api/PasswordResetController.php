@@ -134,7 +134,7 @@ class PasswordResetController
         // Revoke token 
         $user->tokens()->delete();
         
-        $user->Password = bcrypt($request->string('password'));
+        $user->Password = bcrypt(trim($request->string('password')));
         $user->changePassword = 0;
         $user->save();
 
