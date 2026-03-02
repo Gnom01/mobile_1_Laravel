@@ -24,7 +24,7 @@ class UsersRelationsController extends Controller
     {
         // Wywołanie jobów synchronizacji
 
-        PullPaymentsItemsJob::dispatchSync();
+        // PullPaymentsItemsJob::dispatchSync();
 
         $relatedUsers = DB::table('usersrelations as ur')
             ->leftJoin('users as u', function ($join) {

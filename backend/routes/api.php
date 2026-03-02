@@ -39,6 +39,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/clients/{id}', [ClientController::class, 'update']);
 
     // Users
+    Route::post('/users/{guid}/credentials', [CrmUserController::class, 'updateCredentials']);
     Route::put('/users/{id}', [CrmUserController::class, 'update']);
     Route::get('/payments/schedule', [PaymentController::class, 'getSchedule']);
     Route::get('/payments/history/{parentGuid}', [PaymentController::class, 'getPaymentHistory']);
