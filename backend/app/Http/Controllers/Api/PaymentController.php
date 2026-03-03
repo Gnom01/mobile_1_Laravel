@@ -44,9 +44,11 @@ class PaymentController extends Controller
                 'userspaymentsschedules.paymentDate',
                 'userspaymentsschedules.leftToPaid as paymentAmount',
                 'userspaymentsschedules.paymentStatusesDVID',
-                'userspaymentsschedules.localizationsID'
+                'userspaymentsschedules.localizationsID',
+                'l.localizationName'
             )
             ->join('users as u', 'u.UsersID', '=', 'userspaymentsschedules.usersID')
+            ->leftJoin('localizations as l', 'l.LocalizationsID', '=', 'userspaymentsschedules.localizationsID')
             ->whereIn('userspaymentsschedules.usersID', $allUserIds)
             ->where('userspaymentsschedules.Cancelled', 0)
             ->where('userspaymentsschedules.paymentStatusesDVID', 1)
