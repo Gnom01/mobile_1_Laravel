@@ -8,13 +8,13 @@ services:
     image: mysql:8.0
     container_name: mobile_1_laravel-mysql-1
     restart: unless-stopped
+    ports:        
+      - "3307:3306"
     environment:
       MYSQL_DATABASE: app
       MYSQL_USER: app
       MYSQL_PASSWORD: mJ78KwP6HWfrFYL9x
       MYSQL_ROOT_PASSWORD: mJ78KwP6HWfrFYL9x
-    ports:        
-      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
