@@ -13,6 +13,8 @@ services:
       MYSQL_USER: app
       MYSQL_PASSWORD: mJ78KwP6HWfrFYL9x
       MYSQL_ROOT_PASSWORD: mJ78KwP6HWfrFYL9x
+    ports:        
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
