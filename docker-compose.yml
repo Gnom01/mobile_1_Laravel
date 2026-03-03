@@ -8,8 +8,6 @@ services:
     image: mysql:8.0
     container_name: mobile_1_laravel-mysql-1
     restart: unless-stopped
-    ports:        
-      - "3307:3306"
     environment:
       MYSQL_DATABASE: app
       MYSQL_USER: app
