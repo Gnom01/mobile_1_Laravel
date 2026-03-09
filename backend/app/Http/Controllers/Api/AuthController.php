@@ -14,6 +14,10 @@ class AuthController
      */
     public function login(Request $request)
     {
+
+        
+        // \App\Jobs\PullDictionariesJob::dispatchSync();
+
         $request->validate([
             'Email' => 'required|email',
             'Password' => 'required',

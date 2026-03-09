@@ -22,6 +22,9 @@ class PullDictionariesJob implements ShouldQueue
             'primaryKey' => 'DictionariesID',
             'pageSize'   => 1000,
             'responseKey'   => 'body',
+            'extraParams' => [
+                'current_LocalizationsID' => 0,
+            ],
             'fieldMap' => function (array $r) use ($syncService) {
                 return [
                     'Parent_DictionariesID' => (int)($r['parent_DictionariesID'] ?? 0),
