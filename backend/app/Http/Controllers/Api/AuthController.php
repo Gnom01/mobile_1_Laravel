@@ -18,7 +18,7 @@ class AuthController
 
         
         // \App\Jobs\PullDictionariesJob::dispatchSync();
-        PullDictionariesJob::dispatchSync(); // trigger sync to update dictionaries immediately after login   
+        // PullDictionariesJob::dispatchSync(); // trigger sync to update dictionaries immediately after login   
     
         $request->validate([
             'Email' => 'required|email',
