@@ -26,25 +26,28 @@ class PullDictionariesJob implements ShouldQueue
                 'current_LocalizationsID' => 0,
             ],
             'fieldMap' => function (array $r) use ($syncService) {
-                return [
-                    'Parent_DictionariesID' => (int)($r['parent_DictionariesID'] ?? 0),
-                    'Parent_DictionaryName' => (string)($r['parent_DictionaryName'] ?? ''),
-                    'Parent_ValueID'        => (int)($r['parent_ValueID'] ?? 0),
-                    'DictionaryName'        => (string)($r['dictionaryName'] ?? ''),
-                    'Name'                  => (string)($r['name'] ?? ''),
-                    'ValueID'               => (int)($r['valueID'] ?? 0),
-                    'ValueText'             => (string)($r['valueText'] ?? ''),
-                    'OrderPosition'         => (int)($r['orderPosition'] ?? 0),
-                    'Description'           => (string)($r['description'] ?? ''),
-                    'Editable'              => (int)($r['editable'] ?? 1),
-                    'Cancelled'             => (int)($r['cancelled'] ?? 0),
-                    'WhenInserted'          => $syncService->validateDate($r['whenInserted'] ?? '', now()),
-                    'WhoInserted_UsersID'   => (int)($r['whoInserted_UsersID'] ?? 0),
-                    'WhenUpdated'           => $syncService->validateDate($r['whenUpdated'] ?? '', now()),
-                    'WhoUpdated_UsersID'    => (int)($r['whoUpdated_UsersID'] ?? 0),
-                    'ItemColor'             => (string)($r['itemColor'] ?? ''),
-                    'Hidden'                => (int)($r['hidden'] ?? 0),
+                $mapped = [
+                    'Parent_DictionariesID' => ($r["DictionariesID"] ?? 0),
+                    'Parent_DictionaryName' => ($r["Parent_DictionaryName"] ?? ''),
+                    'Parent_ValueID'        => ($r["Parent_ValueID"] ?? 0),
+                    'DictionaryName'        => ($r['DictionaryName'] ?? ''),
+                    'Name'                  => ($r['Name'] ?? ''),
+                    'ValueID'               => ($r['ValueID'] ?? 0),
+                    'ValueText'             => ($r['ValueText'] ?? ''),
+                    'OrderPosition'         => ($r['OrderPosition'] ?? 0),
+                    'Description'           => ($r['Description'] ?? ''),
+                    'Editable'              => ($r['Editable'] ?? 1),
+                    'Cancelled'             => ($r['Cancelled'] ?? 0),
+                    'WhenInserted'          => $syncService->validateDate($r['WhenInserted'] ?? '', now()),
+                    'WhoInserted_UsersID'   => ($r['WhoInserted_UsersID'] ?? 0),
+                    'WhenUpdated'           => $syncService->validateDate($r['WhenUpdated'] ?? '', now()),
+                    'WhoUpdated_UsersID'    => ($r['WhoUpdated_UsersID'] ?? 0),
+                    'ItemColor'             => ($r['ItemColor'] ?? ''),
+                    'Hidden'                => ($r['Hidden'] ?? 0),
                 ];
+ 
+
+                return $mapped;
             },
         ]);
     }

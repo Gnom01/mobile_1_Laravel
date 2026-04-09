@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+
 use App\Models\CrmToken;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -44,6 +45,7 @@ class CrmAuthService
     private function login(): string
     {
         Log::info('CRM Auth: Starting login attempt for ' . config('services.crm.username'));
+    
 
         try {
             $resp = $this->http()

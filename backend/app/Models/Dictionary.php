@@ -30,6 +30,7 @@ class Dictionary extends Model
         'WhoUpdated_UsersID',
         'ItemColor',
         'Hidden',
+        'localizationsID',
     ];
 
     protected $casts = [
@@ -38,5 +39,6 @@ class Dictionary extends Model
         'Editable' => 'integer',
         'Cancelled' => 'integer',
         'Hidden' => 'integer',
+        'localizationsID' => 'integer',
     ];
 }

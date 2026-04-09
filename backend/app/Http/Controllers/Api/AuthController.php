@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Jobs\PullDictionariesJob;
 use App\Models\CrmUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -17,7 +18,8 @@ class AuthController
 
         
         // \App\Jobs\PullDictionariesJob::dispatchSync();
-
+        PullDictionariesJob::dispatchSync(); // trigger sync to update dictionaries immediately after login   
+    
         $request->validate([
             'Email' => 'required|email',
             'Password' => 'required',
