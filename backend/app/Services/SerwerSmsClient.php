@@ -19,14 +19,15 @@ class SerwerSmsClient
     {
         $token  = config('services.serwersms.token');
         $sender = config('services.serwersms.sender');
+        $testMode = $test || (bool) config('services.sms.test_mode', false);
 
         $payload = [
             'phone'   => $phoneE164,
             'text'    => $message,
             'details' => true,
             'utf'     => true,
-            'flash'   => true,
-            'test'    => false,
+            'flash'   => false,
+            'test'    => $testMode,
         ];
 
         if (!empty($sender)) {
@@ -34,7 +35,7 @@ class SerwerSmsClient
         }
 
         $resp = Http::withOptions([
-            'verify' => app()->environment('local') ? false : true,
+            'verify' => !app()->environment(['local', 'testing']),
         ])->withHeaders([
             'Authorization' => "Bearer {$token}",
         ])->asForm()->post('https://api2.serwersms.pl/messages/send_sms.json', $payload);
@@ -47,10 +48,10 @@ class SerwerSmsClient
         ];
 
         Log::info('SerwerSMS response', [
-            'phone'  => $phoneE164,
+            'phone_suffix' => substr($phoneE164, -3),
+            'test_mode' => $testMode,
             'status' => $result['status'],
             'ok'     => $result['ok'],
-            'data'   => $result['data'],
         ]);
 
         return $result;

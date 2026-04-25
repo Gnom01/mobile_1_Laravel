@@ -37,14 +37,16 @@ class CrmAuthService
     private function http()
     {
         return Http::baseUrl(config('services.crm.base_url'))
-            ->withoutVerifying() // Fix for local SSL issue
+            ->withOptions([
+                'verify' => (bool) config('services.crm.verify_tls', true),
+            ])
             ->timeout(20)
             ->retry(2, 300);
     }
 
     private function login(): string
     {
-        Log::info('CRM Auth: Starting login attempt for ' . config('services.crm.username'));
+        Log::info('CRM Auth: Starting login attempt');
     
 
         try {
@@ -70,7 +72,6 @@ class CrmAuthService
         if (!$access) {
             Log::error('CRM Auth: Login failed - missing access_token in response.', [
                 'available_keys' => array_keys($resp),
-                'response_snippet' => substr(json_encode($resp), 0, 500)
             ]);
             throw new \RuntimeException('CRM login: missing access_token/token (dostępne klucze: ' . implode(', ', array_keys($resp)) . ')');
         }

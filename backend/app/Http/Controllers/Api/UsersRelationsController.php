@@ -5,12 +5,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Jobs\PullUsersJob;
-use App\Jobs\PullUsersRelationsJob;
-use App\Jobs\PullPaymentsRealJob;
-use App\Jobs\PullPaymentsItemsJob;
-use App\Jobs\PullLocalizationsJob;
-use App\Jobs\PullContractsJob;
 
 class UsersRelationsController extends Controller
 {
@@ -20,29 +14,57 @@ class UsersRelationsController extends Controller
      * @param string $parentGuid
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getRelatedUsers($parentGuid)
+    public function getRelatedUsers(Request $request, $parentGuid)
     {
-        // Wywołanie jobów synchronizacji
+        $authUser = $request->user();
 
-        // PullPaymentsItemsJob::dispatchSync();
+        if (!$authUser) {
+            return response()->json([
+                'success' => false,
+                'error' => 'UNAUTHORIZED',
+            ], 401);
+        }
+
+        $parent = DB::table('users')
+            ->where('guid', $parentGuid)
+            ->where('Cancelled', 0)
+            ->first();
+
+        if (!$parent) {
+            return response()->json([
+                'success' => false,
+                'error' => 'USER_NOT_FOUND',
+            ], 404);
+        }
+
+        if ((int) $parent->UsersID !== (int) $authUser->UsersID) {
+            return response()->json([
+                'success' => false,
+                'error' => 'FORBIDDEN',
+            ], 403);
+        }
 
         $relatedUsers = DB::table('usersrelations as ur')
             ->leftJoin('users as u', function ($join) {
                 $join->on('u.UsersID', '=', 'ur.UsersID')
                     ->where('u.Cancelled', '=', 0);
             })
-            ->where('ur.Parent_UsersID', function ($query) use ($parentGuid) {
-                $query->select('p.UsersID')
-                    ->from('users as p')
-                    ->where('p.guid', $parentGuid)
-                    ->where('p.Cancelled', 0)
-                    ->limit(1);
-            })
+            ->where('ur.Parent_UsersID', $authUser->UsersID)
             ->where('ur.Cancelled', 0)
-            ->select('u.fullName', 'u.FirstName', 'u.LastName', 'u.DateOfBirdth', 'u.Pesel', 'u.address', 
-            'u.Phone', 'u.Email', 'u.guid', 'u.Street', 'u.Building', 'u.Flat', 'u.City', 'u.PostalCode')
+            ->select(
+                'u.fullName',
+                'u.FirstName',
+                'u.LastName',
+                'u.DateOfBirdth',
+                'u.Phone',
+                'u.Email',
+                'u.guid'
+            )
             ->get();
 
-        return response()->json($relatedUsers);
+        return response()->json([
+            'success' => true,
+            'data' => $relatedUsers,
+        ]);
     }
 }

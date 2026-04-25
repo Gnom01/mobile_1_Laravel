@@ -8,6 +8,7 @@ use App\Services\CrmClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class CrmUserController extends Controller
 {
@@ -54,6 +55,20 @@ class CrmUserController extends Controller
                 'ok'      => false,
                 'message' => 'User not found',
             ], 404);
+        }
+
+        $loginTaken = CrmUser::where('Cancelled', 0)
+            ->where('UsersID', '!=', $targetUser->UsersID)
+            ->where(function ($query) use ($newLogin) {
+                $query->whereRaw('LOWER(login) = ?', [$newLogin])
+                    ->orWhereRaw('LOWER(Email) = ?', [$newLogin]);
+            })
+            ->exists();
+
+        if ($loginTaken) {
+            throw ValidationException::withMessages([
+                'login' => ['The selected login is already in use.'],
+            ]);
         }
 
         // 3. Send update to CRM
@@ -110,12 +125,10 @@ class CrmUserController extends Controller
 
         try {
             $crmResp = $crmClient->post('/CrmToMobileSync/setUsersForLocalization', $crmPayload);
-            $crmData = $crmResp->json();
 
             Log::info('Subaccount credentials: CRM update response', [
                 'target_guid' => $guid,
                 'status'      => $crmResp->status(),
-                'data'        => $crmData,
             ]);
             
             if (!$crmResp->successful()) {
@@ -143,7 +156,7 @@ class CrmUserController extends Controller
 
         // 4. Sync from CRM to local DB
         try {
-            \App\Jobs\PullUsersJob::dispatchSync();
+            \App\Jobs\PullUsersJob::dispatch();
         } catch (\Throwable $e) {
             Log::warning('Subaccount credentials: PullUsersJob failed after CRM update', [
                 'target_guid' => $guid,

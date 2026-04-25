@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Jobs\PullDictionariesJob;
 use App\Models\CrmUser;
+use App\Models\OtpRequest;
+use App\Models\UsersRelation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class AuthController
@@ -16,10 +18,11 @@ class AuthController
     public function login(Request $request)
     {
 
-        
-        // \App\Jobs\PullDictionariesJob::dispatchSync();
-        // PullDictionariesJob::dispatchSync(); // trigger sync to update dictionaries immediately after login   
-    
+
+            
+         \App\Jobs\PullLocalizationsJob::dispatchSync();
+        // PullDictionariesJob::dispatchSync(); // trigger sync to update dictionaries immediately after login 
+
         $request->validate([
             'Email' => 'required|email',
             'Password' => 'required',
@@ -35,8 +38,8 @@ class AuthController
 
         // Check if user exists
         if (!$user) {
-            \Illuminate\Support\Facades\Log::warning('Login failed: user not found', [
-                'email' => $email,
+            Log::warning('Login failed: user not found', [
+                'email_hash' => sha1($email),
             ]);
             throw ValidationException::withMessages([
                 'Email' => ['The provided credentials are incorrect.'],
@@ -64,8 +67,8 @@ class AuthController
         }
 
         if (!$isCorrect) {
-            \Illuminate\Support\Facades\Log::warning('Login failed: incorrect password', [
-                'email' => $email,
+            Log::warning('Login failed: incorrect password', [
+                'email_hash' => sha1($email),
                 'user_id' => $user->UsersID,
             ]);
             throw ValidationException::withMessages([
@@ -77,11 +80,11 @@ class AuthController
         if (!str_starts_with($storedHash, '$2y$') && !str_starts_with($storedHash, '$argon2')) {
             $user->Password = Hash::make($password);
             $user->save();
-            \Illuminate\Support\Facades\Log::info('Password migrated to Bcrypt', ['user_id' => $user->UsersID]);
+            Log::info('Password migrated to Bcrypt', ['user_id' => $user->UsersID]);
         }
 
-        \Illuminate\Support\Facades\Log::info('Login successful', [
-            'email' => $email,
+        Log::info('Login successful', [
+            'email_hash' => sha1($email),
             'user_id' => $user->UsersID,
         ]);
 
@@ -129,6 +132,7 @@ class AuthController
             'LastName' => 'required|string|max:255',
             'Email' => 'required|email',
             'Phone' => 'required|string|max:25',
+            'otp_code' => 'required|string|size:6',
             'Password' => 'required|string|min:8',
             'PersonalDataProcessingConsent' => 'nullable|boolean',
             'consentReceiveSmsEmailPhone' => 'nullable|boolean',
@@ -138,8 +142,10 @@ class AuthController
 
         $email = strtolower(trim($request->input('Email')));
         $phone = $request->input('Phone');
+        $otpCode = trim((string) $request->input('otp_code'));
         $password = (string) $request->input('Password');
         $localizationId = $request->input('current_LocalizationsID', 3);
+        $normalizedPhone = $this->normalizePhone((string) $phone);
 
         // Update request with normalized email
         $request->merge(['Email' => $email]);
@@ -150,6 +156,14 @@ class AuthController
             throw ValidationException::withMessages([
                 'Email' => ['A user with this email already exists.'],
             ]);
+        }
+
+        if (!$this->verifyOtpForPhone($normalizedPhone, $otpCode)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'OTP_INVALID',
+                'message' => 'Invalid or expired OTP code.',
+            ], 422);
         }
 
         // 1. POST new user to CRM API
@@ -204,21 +218,19 @@ class AuthController
             'current_LocalizationsID'       => (string) $localizationId,
         ];
 
-        \Illuminate\Support\Facades\Log::info('Registering user in CRM', [
-            'email' => $email,
-            'phone' => $phone,
+        Log::info('Registering user in CRM', [
+            'email_hash' => sha1($email),
+            'phone_suffix' => substr($normalizedPhone, -3),
         ]);
 
         try {
             $crmResp = $crmClient->post('/CrmToMobileSync/setUsersForLocalization', $crmPayload);
-            $crmData = $crmResp->json();
 
-            \Illuminate\Support\Facades\Log::info('CRM registration response', [
+            Log::info('CRM registration response', [
                 'status' => $crmResp->status(),
-                'data'   => $crmData,
             ]);
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::error('CRM registration failed', [
+            Log::error('CRM registration failed', [
                 'error' => $e->getMessage(),
             ]);
             return response()->json([
@@ -231,7 +243,7 @@ class AuthController
         try {
             \App\Jobs\PullUsersJob::dispatchSync();
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('PullUsersJob failed after registration', [
+            Log::warning('PullUsersJob failed after registration', [
                 'error' => $e->getMessage(),
             ]);
         }
@@ -249,8 +261,8 @@ class AuthController
         }
 
         if (!$user) {
-            \Illuminate\Support\Facades\Log::error('User not found in local DB after CRM registration + sync', [
-                'email' => $email,
+            Log::error('User not found in local DB after CRM registration + sync', [
+                'email_hash' => sha1($email),
             ]);
             return response()->json([
                 'success' => false,
@@ -258,12 +270,16 @@ class AuthController
             ], 500);
         }
 
+        OtpRequest::where('phone', $normalizedPhone)
+            ->where('expires_at', '>', now())
+            ->update(['expires_at' => now()]);
+
         // Revoke old tokens & create new one
         $user->tokens()->delete();
         $token = $user->createToken('api-token')->plainTextToken;
 
-        \Illuminate\Support\Facades\Log::info('Registration successful', [
-            'email'   => $email,
+        Log::info('Registration successful', [
+            'email_hash'   => sha1($email),
             'user_id' => $user->UsersID,
         ]);
 
@@ -285,21 +301,41 @@ class AuthController
      */
     public function profile(Request $request)
     {
-        // DEBUG: Trigger PullPaymentsJob locally
-        \App\Jobs\PullPaymentsJob::dispatchSync();
-        
+        $authUser = $request->user();
         $guid = $request->input('guid');
 
+        if (!$authUser) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized',
+            ], 401);
+        }
+
+        $user = $authUser;
+
         if ($guid) {
-            $user = CrmUser::where('guid', $guid)->first();
-            if (!$user) {
+            $target = CrmUser::where('guid', $guid)->where('Cancelled', 0)->first();
+            if (!$target) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User not found'
                 ], 404);
             }
-        } else {
-            $user = $request->user();
+
+            $isSelf = $target->UsersID === $authUser->UsersID;
+            $isRelated = UsersRelation::where('Parent_UsersID', $authUser->UsersID)
+                ->where('UsersID', $target->UsersID)
+                ->where('Cancelled', 0)
+                ->exists();
+
+            if (!$isSelf && !$isRelated) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Forbidden',
+                ], 403);
+            }
+
+            $user = $target;
         }
 
         return response()->json([
@@ -316,9 +352,7 @@ class AuthController
                 'Flat' => $user->Flat,
                 'City' => $user->City,
                 'PostalCode' => $user->PostalCode,
-                'Pesel' => $user->Pesel,
                 'GenderDVID' => $user->GenderDVID,
-                'MemberCardNumber' => $user->MemberCardNumber,
                 'address' => $user->address,
             ],
         ]);
@@ -329,18 +363,41 @@ class AuthController
      */
     public function consents(Request $request)
     {
+        $authUser = $request->user();
         $guid = $request->input('guid');
 
+        if (!$authUser) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized',
+            ], 401);
+        }
+
+        $user = $authUser;
+
         if ($guid) {
-            $user = CrmUser::where('guid', $guid)->first();
-            if (!$user) {
+            $target = CrmUser::where('guid', $guid)->where('Cancelled', 0)->first();
+            if (!$target) {
                 return response()->json([
                     'success' => false,
                     'message' => 'User not found'
                 ], 404);
             }
-        } else {
-            $user = $request->user();
+
+            $isSelf = $target->UsersID === $authUser->UsersID;
+            $isRelated = UsersRelation::where('Parent_UsersID', $authUser->UsersID)
+                ->where('UsersID', $target->UsersID)
+                ->where('Cancelled', 0)
+                ->exists();
+
+            if (!$isSelf && !$isRelated) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Forbidden',
+                ], 403);
+            }
+
+            $user = $target;
         }
 
         return response()->json([
@@ -365,9 +422,35 @@ class AuthController
             'message' => 'Logged out successfully',
         ]);
     }
+
+    private function verifyOtpForPhone(string $normalizedPhone, string $code): bool
+    {
+        $otp = OtpRequest::where('phone', $normalizedPhone)
+            ->where('expires_at', '>', now())
+            ->latest()
+            ->first();
+
+        if (!$otp || $otp->attempts >= 5) {
+            return false;
+        }
+
+        $otp->increment('attempts');
+
+        return Hash::check($code, $otp->code_hash);
+    }
+
+    private function normalizePhone(string $phone): string
+    {
+        $phone = preg_replace('/[\s\-\(\)]+/', '', $phone);
+
+        if (str_starts_with($phone, '+48')) {
+            return substr($phone, 3);
+        }
+
+        if (str_starts_with($phone, '48') && strlen($phone) === 11) {
+            return substr($phone, 2);
+        }
+
+        return $phone;
+    }
 }
-
-
-
-
-

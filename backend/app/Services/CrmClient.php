@@ -9,6 +9,16 @@ class CrmClient
 {
     public function __construct(private CrmAuthService $auth) {}
 
+    private function httpClient(string $token)
+    {
+        return Http::baseUrl(config('services.crm.base_url'))
+            ->withToken($token)
+            ->withOptions([
+                'verify' => (bool) config('services.crm.verify_tls', true),
+            ])
+            ->timeout(20);
+    }
+
     public function get(string $url, array $query = [])
     {
         return $this->request('get', $url, $query);
@@ -34,10 +44,7 @@ class CrmClient
     {
         $token = $this->auth->getAccessToken();
 
-        $http = Http::baseUrl(config('services.crm.base_url'))
-            ->withToken($token)
-            ->withoutVerifying() // Fix for local SSL issue
-            ->timeout(20);
+        $http = $this->httpClient($token);
 
         $fullUrl = config('services.crm.base_url') . $url;
         // \Illuminate\Support\Facades\Log::info("CrmClient: {$method} {$fullUrl}", ['payload' => $payload]);
@@ -49,11 +56,7 @@ class CrmClient
             CrmToken::query()->delete();
             $token2 = $this->auth->getAccessToken();
 
-            $resp = Http::baseUrl(config('services.crm.base_url'))
-                ->withToken($token2)
-                ->withoutVerifying() // Fix for local SSL issue
-                ->timeout(20)
-                ->{$method}($url, $payload);
+            $resp = $this->httpClient($token2)->{$method}($url, $payload);
         }
 
         return $resp->throw();

@@ -35,7 +35,7 @@ class OtpController
         })->first();
 
         if (!$user) {
-            Log::info('OTP requested for unknown phone', ['phone' => $phone]);
+            Log::info('OTP requested for unknown phone', ['phone_suffix' => substr($phone, -3)]);
             return response()->json(['ok' => true]);
         }
 
@@ -64,8 +64,7 @@ class OtpController
         $appHash = config('services.sms.app_hash', '');
         $msg = "<#> Kod logowania: {$code}. Wazny 5 min.\n{$appHash}";
 
-        // In local env, use test mode (no actual SMS sent)
-        $res = $sms->sendOtp($phone, $msg, app()->environment('local'));
+        $res = $sms->sendOtp($phone, $msg, (bool) config('services.sms.test_mode', false));
 
         // Store SerwerSMS message ID if available
         $messageId = $res['data']['items'][0]['id'] ?? null;
@@ -74,7 +73,7 @@ class OtpController
         }
 
         Log::info('OTP sent', [
-            'phone'      => $phone,
+            'phone_suffix' => substr($phone, -3),
             'sms_ok'     => $res['ok'],
             'message_id' => $messageId,
         ]);
@@ -153,7 +152,7 @@ class OtpController
         $token = $user->createToken('mobile-otp')->plainTextToken;
 
         Log::info('OTP verified, token created', [
-            'phone'   => $phone,
+            'phone_suffix' => substr($phone, -3),
             'user_id' => $user->UsersID,
         ]);
 

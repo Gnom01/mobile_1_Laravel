@@ -13,13 +13,16 @@ class PaymentController extends Controller
 {
     public function getSchedule(Request $request)
     {
-        $user = $request->user();
+        $authUser = $request->user();
 
-        if (!$user) {
-            return response()->json(['error' => 'Brak autoryzacji'], 401);
+        if (!$authUser) {
+            return response()->json([
+                'success' => false,
+                'error' => 'UNAUTHORIZED',
+            ], 401);
         }
 
-        $usersID = $user->UsersID;
+        $usersID = $authUser->UsersID;
 
         // Fetch family members
         $familyIds = UsersRelation::where('Parent_UsersID', $usersID)
@@ -60,7 +63,10 @@ class PaymentController extends Controller
         // Group by localizationsID
         $groupedPayments = $payments->groupBy('localizationsID');
 
-        return response()->json($groupedPayments);
+        return response()->json([
+            'success' => true,
+            'data' => $groupedPayments,
+        ]);
     }
 
     /**
@@ -69,14 +75,42 @@ class PaymentController extends Controller
      * @param string $parentGuid
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getPaymentHistory($parentGuid)
+    public function getPaymentHistory(Request $request, $parentGuid)
     {
-        // 1. Resolve usersID from guid
-        $user = DB::table('users')->where('guid', $parentGuid)->where('Cancelled', 0)->first();
-        if (!$user) {
-            return response()->json(['error' => 'User not found'], 404);
+        $authUser = $request->user();
+        if (!$authUser) {
+            return response()->json([
+                'success' => false,
+                'error' => 'UNAUTHORIZED',
+            ], 401);
         }
-        $usersID = $user->UsersID;
+
+        // Resolve target user by guid and validate relation to authenticated user.
+        $targetUser = CrmUser::where('guid', $parentGuid)
+            ->where('Cancelled', 0)
+            ->first();
+
+        if (!$targetUser) {
+            return response()->json([
+                'success' => false,
+                'error' => 'USER_NOT_FOUND',
+            ], 404);
+        }
+
+        $isSelf = (int) $targetUser->UsersID === (int) $authUser->UsersID;
+        $isRelated = UsersRelation::where('Cancelled', 0)
+            ->where('Parent_UsersID', $authUser->UsersID)
+            ->where('UsersID', $targetUser->UsersID)
+            ->exists();
+
+        if (!$isSelf && !$isRelated) {
+            return response()->json([
+                'success' => false,
+                'error' => 'FORBIDDEN',
+            ], 403);
+        }
+
+        $usersID = (int) $targetUser->UsersID;
 
         // 2. Fetch Parent Payments
         $parentSql = "
@@ -172,6 +206,9 @@ class PaymentController extends Controller
             ]);
         }
 
-        return response()->json($allPayment);
+        return response()->json([
+            'success' => true,
+            'data' => $allPayment,
+        ]);
     }
 }

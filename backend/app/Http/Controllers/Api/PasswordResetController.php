@@ -9,6 +9,7 @@ use App\Services\SerwerSmsClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class PasswordResetController
 {
@@ -27,7 +28,7 @@ class PasswordResetController
         $user = $this->findUserByPhone($phone);
 
         if (!$user) {
-            Log::info('Password reset requested for unknown phone', ['phone' => $phone]);
+            Log::info('Password reset requested for unknown phone', ['phone_suffix' => substr($phone, -3)]);
             return response()->json(['ok' => true]); // anti-enumeration
         }
 
@@ -56,8 +57,7 @@ class PasswordResetController
         $appHash = config('services.sms.app_hash', '');
         $msg = "<#> Kod do resetu hasla: {$code}. Wazny 5 min.\n{$appHash}";
 
-        // In local env, use test mode (no actual SMS sent)
-        $res = $sms->sendOtp($phone, $msg, app()->environment('local'));
+        $res = $sms->sendOtp($phone, $msg, (bool) config('services.sms.test_mode', false));
 
         $messageId = $res['data']['items'][0]['id'] ?? null;
         if ($messageId) {
@@ -65,7 +65,7 @@ class PasswordResetController
         }
 
         Log::info('Password reset OTP sent', [
-            'phone'      => $phone,
+            'phone_suffix' => substr($phone, -3),
             'sms_ok'     => $res['ok'],
             'message_id' => $messageId,
         ]);
@@ -162,13 +162,27 @@ class PasswordResetController
 
         if (!$user) {
             Log::warning('Password reset: guid does not match phone', [
-                'phone' => $phone,
+                'phone_suffix' => substr($phone, -3),
                 'guid'  => $guid,
             ]);
             return response()->json([
                 'ok'    => false,
                 'error' => 'ACCOUNT_NOT_MATCH_PHONE',
             ], 422);
+        }
+
+        $loginTaken = CrmUser::where('Cancelled', 0)
+            ->where('UsersID', '!=', $user->UsersID)
+            ->where(function ($query) use ($newLogin) {
+                $query->whereRaw('LOWER(login) = ?', [$newLogin])
+                    ->orWhereRaw('LOWER(Email) = ?', [$newLogin]);
+            })
+            ->exists();
+
+        if ($loginTaken) {
+            throw ValidationException::withMessages([
+                'login' => ['The selected login is already in use.'],
+            ]);
         }
 
         // 3. Send update to CRM
@@ -225,12 +239,10 @@ class PasswordResetController
 
         try {
             $crmResp = $crmClient->post('/CrmToMobileSync/setUsersForLocalization', $crmPayload);
-            $crmData = $crmResp->json();
 
             Log::info('Password reset: CRM update response', [
                 'guid'   => $guid,
                 'status' => $crmResp->status(),
-                'data'   => $crmData,
             ]);
         } catch (\Throwable $e) {
             Log::error('Password reset: CRM update failed', [
@@ -246,7 +258,7 @@ class PasswordResetController
 
         // 4. Sync users from CRM to local DB
         try {
-            \App\Jobs\PullUsersJob::dispatchSync();
+            \App\Jobs\PullUsersJob::dispatch();
         } catch (\Throwable $e) {
             Log::warning('Password reset: PullUsersJob failed after CRM update', [
                 'guid'  => $guid,

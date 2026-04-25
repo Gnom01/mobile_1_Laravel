@@ -36,12 +36,17 @@ return [
     ],
 
     'crm' => [
-    'base_url' => env('CRM_BASE_URL'),
-    'login_endpoint' => env('CRM_LOGIN_ENDPOINT', '/auth/login'),
-    'refresh_endpoint' => env('CRM_REFRESH_ENDPOINT', '/auth/refresh'),
-    'username' => env('CRM_USERNAME'),
-    'password' => env('CRM_PASSWORD'),
-],
+        'base_url' => env('CRM_BASE_URL'),
+        'login_endpoint' => env('CRM_LOGIN_ENDPOINT', '/auth/login'),
+        'refresh_endpoint' => env('CRM_REFRESH_ENDPOINT', '/auth/refresh'),
+        'username' => env('CRM_USERNAME'),
+        'password' => env('CRM_PASSWORD'),
+        'verify_tls' => filter_var(
+            env('CRM_VERIFY_TLS', env('APP_ENV', 'production') !== 'local'),
+            FILTER_VALIDATE_BOOL,
+            FILTER_NULL_ON_FAILURE
+        ) ?? (env('APP_ENV', 'production') !== 'local'),
+    ],
 
     'serwersms' => [
         'token'  => env('SERWERSMS_TOKEN'),
@@ -50,6 +55,11 @@ return [
 
     'sms' => [
         'app_hash' => env('SMS_APP_HASH', ''),
+        'test_mode' => filter_var(
+            env('SMS_TEST_MODE', env('APP_ENV', 'production') !== 'production'),
+            FILTER_VALIDATE_BOOL,
+            FILTER_NULL_ON_FAILURE
+        ) ?? (env('APP_ENV', 'production') !== 'production'),
     ],
 
 ];
