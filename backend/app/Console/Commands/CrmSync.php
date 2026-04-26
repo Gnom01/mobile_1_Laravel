@@ -13,6 +13,7 @@ use App\Jobs\PullLocalizationsJob;
 use App\Jobs\PullContractsJob;
 use App\Jobs\PullUsersRelationsJob;
 use App\Jobs\PullDictionariesJob;
+use App\Jobs\PullProductsJob;
 use App\Jobs\PushOutboxJob;
 use Throwable;
 
@@ -50,6 +51,7 @@ class CrmSync extends Command
             'PullContractsJob'      => PullContractsJob::class,
             'PullUsersRelationsJob' => PullUsersRelationsJob::class,
             'PullDictionariesJob'   => PullDictionariesJob::class,
+            'PullProductsJob'       => PullProductsJob::class,
             'PushOutboxJob'         => PushOutboxJob::class,
         ];
 

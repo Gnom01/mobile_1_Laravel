@@ -20,7 +20,7 @@ class AuthController
 
 
             
-         \App\Jobs\PullLocalizationsJob::dispatchSync();
+         //\App\Jobs\PullLocalizationsJob::dispatchSync();
         // PullDictionariesJob::dispatchSync(); // trigger sync to update dictionaries immediately after login 
 
         $request->validate([
