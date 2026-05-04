@@ -19,7 +19,7 @@ class PullProductsJob implements ShouldQueue
             'resource'   => 'products',
             'endpoint'   => '/CrmToMobileSync/getProductsMobile',
             'model'      => Product::class,
-            'primaryKey' => 'ProductsID',
+            'primaryKey' => 'productsID',
             'pageSize'   => 1000,
             'responseKey' => 'body',
             'extraParams' => [
