@@ -25,6 +25,9 @@ class PullDaysJob implements ShouldQueue
             'responseKey'     => 'body',
             'whenUpdatedKey'  => 'whenupdated',
             'orderParam'      => 'intdate ASC',
+            'extraParams' => [
+                'current_LocalizationsID' => '0',
+            ],
             'fieldMap'        => fn(array $r): array => $r,
         ]);
     }

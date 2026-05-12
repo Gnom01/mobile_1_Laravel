@@ -51,10 +51,10 @@ class CrmSyncService
 
         $lock = Cache::lock("sync:{$resource}", $lockTime);
 
-        // if (!$lock->get()) {
-        //     Log::warning("{$logPrefix} Already running, skipping.");
-        //     return ['status' => 'skipped', 'reason' => 'locked'];
-        // }
+        if (!$lock->get()) {
+            Log::warning("{$logPrefix} Already running, skipping.");
+            return ['status' => 'skipped', 'reason' => 'locked'];
+        }
 
         $startTime = microtime(true);
         $totalProcessed = 0;
@@ -145,7 +145,7 @@ class CrmSyncService
                 $id = (int)($r[$apiPrimaryKey] ?? 0);
                 if (!$id) continue;
 
-                $fields = $fieldMap($r);
+                $fields = $this->sanitizeRecord($fieldMap($r));
                 $model = $modelClass::updateOrCreate(
                     [$primaryKey => $id],
                     $fields
@@ -252,7 +252,7 @@ class CrmSyncService
                 $id = (int)($r[$apiPrimaryKey] ?? 0);
                 if (!$id) continue;
 
-                $fields = $fieldMap($r);
+                $fields = $this->sanitizeRecord($fieldMap($r));
                 $model = $modelClass::updateOrCreate(
                     [$primaryKey => $id],
                     $fields
@@ -321,5 +321,24 @@ class CrmSyncService
         if (empty($date)) return $default;
         if (str_starts_with($date, '0000') || str_starts_with($date, '-')) return $default;
         return $date;
+    }
+
+    /**
+     * Replace invalid MySQL date values ('0000-00-00', '0000-00-00 00:00:00')
+     * with null so MySQL strict mode does not reject the insert/update.
+     * Applied automatically to every record before upsert.
+     */
+    private function sanitizeRecord(array $fields): array
+    {
+        foreach ($fields as $key => $value) {
+            if (is_string($value) && (
+                $value === '0000-00-00' ||
+                $value === '0000-00-00 00:00:00' ||
+                str_starts_with($value, '0000-')
+            )) {
+                $fields[$key] = null;
+            }
+        }
+        return $fields;
     }
 }

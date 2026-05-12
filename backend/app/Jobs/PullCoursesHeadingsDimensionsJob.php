@@ -24,6 +24,9 @@ class PullCoursesHeadingsDimensionsJob implements ShouldQueue
             'responseKey'     => 'body',
             'whenUpdatedKey'  => 'whenupdated',
             'orderParam'      => 'whenupdated ASC',
+            'extraParams' => [
+                'current_LocalizationsID' => '0',
+            ],
             'fieldMap'        => fn(array $r): array => $r,
         ]);
     }

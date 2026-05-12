@@ -25,6 +25,9 @@ class PullPriceListsTemplatesJob implements ShouldQueue
             'whenUpdatedKey'  => 'whenupdated',
             'orderParam'      => 'whenupdated ASC',
             'fieldMap'        => fn(array $r): array => $r,
+            'extraParams' => [
+                'current_LocalizationsID' => '0',
+            ],
         ]);
     }
 }
