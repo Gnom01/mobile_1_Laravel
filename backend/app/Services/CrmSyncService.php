@@ -51,10 +51,10 @@ class CrmSyncService
 
         $lock = Cache::lock("sync:{$resource}", $lockTime);
 
-        if (!$lock->get()) {
-            Log::warning("{$logPrefix} Already running, skipping.");
-            return ['status' => 'skipped', 'reason' => 'locked'];
-        }
+        // if (!$lock->get()) {
+        //     Log::warning("{$logPrefix} Already running, skipping.");
+        //     return ['status' => 'skipped', 'reason' => 'locked'];
+        // }
 
         $startTime = microtime(true);
         $totalProcessed = 0;
@@ -99,6 +99,9 @@ class CrmSyncService
         $fieldMap    = $config['fieldMap'];
         $responseKey = $config['responseKey'] ?? 'body';
 
+        $whenUpdatedKey = $config['whenUpdatedKey'] ?? 'whenUpdated';
+        $orderParam     = $config['orderParam'] ?? 'WhenUpdated ASC';
+
         if (!$state->full_sync_started_at) {
             $state->full_sync_started_at = now();
             $state->save();
@@ -119,7 +122,7 @@ class CrmSyncService
                 'updatedSince'  => null,
                 $pageSizeParam  => $pageSize,
                 'page'          => $page,
-                'order'         => 'WhenUpdated ASC',
+                'order'         => $orderParam,
             ], $extraParams);
 
             $resp = $this->crm->post($endpoint, $params);
@@ -143,17 +146,21 @@ class CrmSyncService
                 if (!$id) continue;
 
                 $fields = $fieldMap($r);
-                $modelClass::updateOrCreate(
+                $model = $modelClass::updateOrCreate(
                     [$primaryKey => $id],
                     $fields
                 );
+
+                if (isset($config['afterSave'])) {
+                    ($config['afterSave'])($r, $model);
+                }
 
                 if ($id > $lastId) {
                     $lastId = $id;
                 }
 
                 // Track max WhenUpdated for later incremental sync
-                $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', null);
+                $whenUpdated = $this->validateDate($r[$whenUpdatedKey] ?? '', null);
                 if ($whenUpdated && (!$pageMaxDate || $whenUpdated > $pageMaxDate)) {
                     $pageMaxDate = $whenUpdated;
                 }
@@ -204,6 +211,9 @@ class CrmSyncService
         $fieldMap   = $config['fieldMap'];
         $responseKey = $config['responseKey'] ?? 'body';
 
+        $whenUpdatedKey = $config['whenUpdatedKey'] ?? 'whenUpdated';
+        $orderParam     = $config['orderParam'] ?? 'WhenUpdated ASC';
+
         $since = $state->last_sync_at
             ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s')
             : null;
@@ -221,7 +231,7 @@ class CrmSyncService
                 'updatedSince'  => $since,
                 $pageSizeParam  => $pageSize,
                 'page'          => $page,
-                'order'         => 'WhenUpdated ASC',
+                'order'         => $orderParam,
             ], $extraParams);
 
             $resp = $this->crm->post($endpoint, $params);
@@ -243,12 +253,16 @@ class CrmSyncService
                 if (!$id) continue;
 
                 $fields = $fieldMap($r);
-                $modelClass::updateOrCreate(
+                $model = $modelClass::updateOrCreate(
                     [$primaryKey => $id],
                     $fields
                 );
 
-                $whenUpdated = $this->validateDate($r['whenUpdated'] ?? '', null);
+                if (isset($config['afterSave'])) {
+                    ($config['afterSave'])($r, $model);
+                }
+
+                $whenUpdated = $this->validateDate($r[$whenUpdatedKey] ?? '', null);
                 if ($whenUpdated && (!$pageMaxDate || $whenUpdated > $pageMaxDate)) {
                     $pageMaxDate = $whenUpdated;
                 }

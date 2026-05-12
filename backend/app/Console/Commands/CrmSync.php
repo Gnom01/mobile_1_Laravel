@@ -13,8 +13,20 @@ use App\Jobs\PullLocalizationsJob;
 use App\Jobs\PullContractsJob;
 use App\Jobs\PullUsersRelationsJob;
 use App\Jobs\PullDictionariesJob;
+use App\Jobs\PullCoursesJob;
+use App\Jobs\PullEmployeesJob;
 use App\Jobs\PullProductsJob;
 use App\Jobs\PushOutboxJob;
+use App\Jobs\PullPriceListsTemplatesPositionsJob;
+use App\Jobs\PullPriceListsTemplatesJob;
+use App\Jobs\PullPriceListsTemplatesPositionsDimensionsJob;
+use App\Jobs\PullProductsDimensionsJob;
+use App\Jobs\PullCoursesHeadingsDimensionsJob;
+use App\Jobs\PullSeasonsJob;
+use App\Jobs\PullXSchedulesJob;
+use App\Jobs\PullDaysJob;
+use App\Jobs\PullDaysOffJob;
+use App\Jobs\PullProductsPaymentInstallmentsJob;
 use Throwable;
 
 class CrmSync extends Command
@@ -52,7 +64,20 @@ class CrmSync extends Command
             'PullUsersRelationsJob' => PullUsersRelationsJob::class,
             'PullDictionariesJob'   => PullDictionariesJob::class,
             'PullProductsJob'       => PullProductsJob::class,
+            'PullCoursesJob'        => PullCoursesJob::class,
+            'PullEmployeesJob'      => PullEmployeesJob::class,
             'PushOutboxJob'         => PushOutboxJob::class,
+            // New: 10 additional CRM tables (lowercase, no field mapping)
+            'PullPriceListsTemplatesPositionsJob'           => PullPriceListsTemplatesPositionsJob::class,
+            'PullPriceListsTemplatesJob'                    => PullPriceListsTemplatesJob::class,
+            'PullPriceListsTemplatesPositionsDimensionsJob' => PullPriceListsTemplatesPositionsDimensionsJob::class,
+            'PullProductsDimensionsJob'                     => PullProductsDimensionsJob::class,
+            'PullCoursesHeadingsDimensionsJob'              => PullCoursesHeadingsDimensionsJob::class,
+            'PullSeasonsJob'                                => PullSeasonsJob::class,
+            'PullXSchedulesJob'                             => PullXSchedulesJob::class,
+            'PullDaysJob'                                   => PullDaysJob::class,
+            'PullDaysOffJob'                                => PullDaysOffJob::class,
+            'PullProductsPaymentInstallmentsJob'            => PullProductsPaymentInstallmentsJob::class,
         ];
 
         foreach ($jobs as $name => $jobClass) {

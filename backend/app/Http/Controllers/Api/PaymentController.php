@@ -117,6 +117,9 @@ class PaymentController extends Controller
             SELECT 
                 p.usersID, p.paymentsID, p.paymentDate, p.cancelled, p.paymentMethodsDVID,
                 d.Name AS paymentMethodsName, p.recepcionist_UsersID, u.fullName,
+                ups.positionName,
+                ups.usersPaymentsSchedulesID,
+                pi.itemName,
                 p.localizationsID, l.clientsID, l.localizationName,
                 p.paymentAmount AS paymentItemAmount,
                 d1.Name AS productPaymentsName,
@@ -126,7 +129,9 @@ class PaymentController extends Controller
             LEFT JOIN dictionaries d1 ON d1.DictionaryName = 'paymentTypes' AND d1.ValueID = p.paymentMethodsDVID AND d1.Cancelled = 0
             LEFT JOIN dictionaries d3 ON d3.DictionaryName = 'PaymentStatuses' AND d3.ValueID = p.paymentStatusesDVID AND d3.Cancelled = 0
             LEFT JOIN localizations l ON l.LocalizationsID = p.localizationsID AND l.Cancelled = 0
+            LEFT JOIN paymentsitems pi ON pi.paymentsID = p.paymentsID AND pi.cancelled = 0
             LEFT JOIN users u         ON u.UsersID = p.usersID AND u.Cancelled = 0
+            LEFT JOIN userspaymentsschedules ups ON ups.usersPaymentsSchedulesID = pi.usersPaymentsSchedulesID AND ups.cancelled = 0
             WHERE p.cancelled = 0
                 AND p.paymentStatusesDVID IN (1,2,3,4)
                 AND p.paymentMethodsDVID <> 4
@@ -141,6 +146,7 @@ class PaymentController extends Controller
                             AND ur.ParticipantRelationsDVID IN (1,2)
                     )
                 )
+              AND p.paymentAmount > 0
             ORDER BY p.paymentsID DESC
         ";
 
@@ -149,6 +155,12 @@ class PaymentController extends Controller
             'usersID2' => $usersID,
             'usersID3' => $usersID
         ]);
+
+        // Deduplicate – LEFT JOIN paymentsitems/userspaymentsschedules may produce
+        // multiple rows per payment; keep first occurrence (which carries positionName).
+        $allPayment = array_values(
+            collect($allPayment)->unique('paymentsID')->all()
+        );
 
         // 3. For each payment, fetch child items
         foreach ($allPayment as $index => $payment) {
