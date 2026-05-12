@@ -87,7 +87,9 @@ class CrmSyncService
 
     /**
      * Full sync: fetch all records page by page (no date filter), tracking progress.
-     * Uses $state->cursor to store the last completed page number for resume.
+     * Full sync: fetch all records ordered by ID, using lastSyncedId as the resume checkpoint.
+     * Sends lastSyncedId to CRM so it returns only records with ID > lastSyncedId.
+     * No page/offset — efficient even on large tables.
      */
     private function syncFull(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix): array
     {
@@ -100,29 +102,24 @@ class CrmSyncService
         $responseKey = $config['responseKey'] ?? 'body';
 
         $whenUpdatedKey = $config['whenUpdatedKey'] ?? 'whenUpdated';
-        $orderParam     = $config['orderParam'] ?? 'WhenUpdated ASC';
+        $pageSizeParam  = $config['pageSizeParam'] ?? 'pageSize';
 
         if (!$state->full_sync_started_at) {
             $state->full_sync_started_at = now();
             $state->save();
         }
 
-        // Resume from last completed page (stored in cursor)
-        $page = max(1, (int)($state->cursor ?? 0) + 1);
+        // Resume from last saved ID (0 = start from beginning)
+        $lastId = (int)($state->last_synced_id ?? 0);
         $totalProcessed = 0;
         $pageMaxDate = null;
-        $lastId = (int)($state->last_synced_id ?? 0);
 
-        Log::info("{$logPrefix} Full sync mode, resuming from page {$page}");
-
-        $pageSizeParam = $config['pageSizeParam'] ?? 'pageSize';
+        Log::info("{$logPrefix} Full sync mode (lastSyncedId), resuming from ID {$lastId}");
 
         do {
             $params = array_merge([
-                'updatedSince'  => null,
+                'lastSyncedId'  => $lastId,
                 $pageSizeParam  => $pageSize,
-                'page'          => $page,
-                'order'         => $orderParam,
             ], $extraParams);
 
             $resp = $this->crm->post($endpoint, $params);
@@ -132,11 +129,11 @@ class CrmSyncService
                 break;
             }
 
-            $body = $resp->json();
+            $body  = $resp->json();
             $items = $this->extractItems($body, $responseKey);
             $itemCount = count($items);
 
-            Log::info("{$logPrefix} Page {$page}: received {$itemCount} items");
+            Log::info("{$logPrefix} Fetched {$itemCount} items after ID {$lastId}");
 
             foreach ($items as $r) {
                 if (!is_array($r)) continue;
@@ -146,7 +143,7 @@ class CrmSyncService
                 if (!$id) continue;
 
                 $fields = $this->sanitizeRecord($fieldMap($r));
-                $model = $modelClass::updateOrCreate(
+                $model  = $modelClass::updateOrCreate(
                     [$primaryKey => $id],
                     $fields
                 );
@@ -159,7 +156,6 @@ class CrmSyncService
                     $lastId = $id;
                 }
 
-                // Track max WhenUpdated for later incremental sync
                 $whenUpdated = $this->validateDate($r[$whenUpdatedKey] ?? '', null);
                 if ($whenUpdated && (!$pageMaxDate || $whenUpdated > $pageMaxDate)) {
                     $pageMaxDate = $whenUpdated;
@@ -168,32 +164,27 @@ class CrmSyncService
                 $totalProcessed++;
             }
 
-            // Save progress after each page (page number in cursor, max id in last_synced_id)
-            $state->cursor = (string)$page;
+            // Save progress after each batch
             $state->last_synced_id = $lastId;
             if ($pageMaxDate) {
                 $state->last_sync_at = Carbon::parse($pageMaxDate);
             }
             $state->save();
 
-            $page++;
-
             // Check time limit
             if ((microtime(true) - $startTime) > $maxTime) {
-                Log::info("{$logPrefix} Time limit ({$maxTime}s) reached after {$totalProcessed} records on page {$page}. Will continue next run.");
-                return ['status' => 'partial', 'processed' => $totalProcessed, 'last_id' => $lastId, 'page' => $page - 1];
+                Log::info("{$logPrefix} Time limit ({$maxTime}s) reached after {$totalProcessed} records, last ID {$lastId}. Will continue next run.");
+                return ['status' => 'partial', 'processed' => $totalProcessed, 'last_id' => $lastId];
             }
 
-        } while ($itemCount > 0);
+        } while ($itemCount >= $pageSize);
 
         // Full sync complete
-        if ($totalProcessed > 0 || $lastId > 0) {
-            $state->is_full_synced = true;
-            $state->full_sync_completed_at = now();
-            $state->cursor = null; // Reset cursor after full sync
-            $state->save();
-            Log::info("{$logPrefix} Full sync completed! Total processed: {$totalProcessed}");
-        }
+        $state->is_full_synced = true;
+        $state->full_sync_completed_at = now();
+        $state->cursor = null;
+        $state->save();
+        Log::info("{$logPrefix} Full sync completed! Total processed: {$totalProcessed}, last ID: {$lastId}");
 
         return ['status' => 'full_sync_complete', 'processed' => $totalProcessed, 'last_id' => $lastId];
     }
