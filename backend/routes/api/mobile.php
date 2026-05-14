@@ -9,6 +9,8 @@ use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\UsersRelationsController;
 use App\Http\Controllers\Api\DictionaryController;
 use App\Http\Controllers\Api\PdfController;
+use App\Http\Controllers\Api\PricingController;
+use App\Http\Controllers\Api\OrderController;
 
 // ───────────────────────────────────────────────
 // Mobile data query routes (require authentication)
@@ -31,6 +33,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Relations
     Route::get('/users-relations/{parentGuid}', [UsersRelationsController::class, 'getRelatedUsers']);
+    Route::post('/users-relations', [UsersRelationsController::class, 'store']);
 
     // Dictionaries & courses
     Route::get('/dictionaries', [DictionaryController::class, 'index']);
@@ -43,4 +46,11 @@ Route::middleware('auth:sanctum')->group(function () {
     // PDF generation
     Route::post('/pdf/generate', [PdfController::class, 'generate']);
     Route::post('/pdf/preview',  [PdfController::class, 'preview']);
+
+    // Pricing
+    Route::get('/pricing/course/{coursesHeadingsID}', [PricingController::class, 'getPriceByCourseHeadingsID']);
+    Route::post('/GetPriceByCourseHeadingsID', [PricingController::class, 'getPrice']);
+
+    // Orders (CRM-first)
+    Route::post('/orders', [OrderController::class, 'store']);
 });

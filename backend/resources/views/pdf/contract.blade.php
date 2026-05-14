@@ -193,11 +193,13 @@
     <tr>
         <td>
             <span class="label">Koszt kursu: </span>
-            <span class="value">{{ number_format($data['allInstallmentsPrice'], 2, ',', ' ') }} zł</span>
+            <span class="value">{{ number_format($data['coursePrice'], 2, ',', ' ') }} zł</span>
         </td>
         <td>
+            @if($data['entryFee'] > 0)
             <span class="label">Opłata wpisowa: </span>
             <span class="value">{{ number_format($data['entryFee'], 2, ',', ' ') }} zł</span>
+            @endif
         </td>
     </tr>
     <tr>
@@ -213,7 +215,7 @@
     <tr>
         <td>
             <span class="label">Liczba pełnych rat: </span>
-            <span class="value">{{ $data['installmentCount'] }}</span>
+            <span class="value">{{ $data['numberOfInstallments'] }}</span>
         </td>
         <td>
             @if($data['payZero']['discountCashZero'] > 0)
@@ -223,13 +225,13 @@
             <span class="value">{{ number_format($data['payZero']['installmentZeroAfterDiscount'], 2, ',', ' ') }} zł</span><br/>
             @endif
             <span class="label">Suma opłat początkowych: </span>
-            <span class="value">{{ number_format($data['payZero']['amountZero'] - $data['payZero']['discountCashZero'], 2, ',', ' ') }} zł</span>
+            <span class="value">{{ number_format($data['payZero']['amountZero'], 2, ',', ' ') }} zł</span>
         </td>
     </tr>
     <tr>
         <td>
             <span class="label">Wartość rat miesięcznych: </span>
-            <span class="value">{{ number_format($data['payZero']['installmentZero'], 2, ',', ' ') }} zł</span>
+            <span class="value">{{ number_format($data['monthlyInstallment'], 2, ',', ' ') }} zł</span>
         </td>
         <td></td>
     </tr>

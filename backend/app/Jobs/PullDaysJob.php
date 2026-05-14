@@ -15,13 +15,12 @@ class PullDaysJob implements ShouldQueue
 
     public function handle(CrmSyncService $syncService): void
     {
-        // Checkpoint by intdate (YYYYMMDD integer), not by daysid
         $syncService->sync([
             'resource'        => 'days',
             'endpoint'        => '/CrmToMobileSync/getDaysMobile',
             'model'           => Day::class,
             'primaryKey'      => 'intdate',
-            'pageSize'        => 1000,
+            'pageSize'        => 100,
             'responseKey'     => 'body',
             'whenUpdatedKey'  => 'whenupdated',
             'orderParam'      => 'intdate ASC',

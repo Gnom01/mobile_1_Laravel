@@ -52,8 +52,13 @@ class PdfGeneratorService
         $data['contractDate']      = $raw['contractDate'] ?? now()->format('d-m-Y');
         $data['contractStartDate'] = $raw['contractStartDate'] ?? '';
         $data['contractEndDate']   = $raw['contractEndDate'] ?? '';
-        $data['allInstallmentsPrice'] = (float) ($raw['allInstallmentsPrice'] ?? 0);
         $data['entryFee']          = (float) ($raw['entryFee'] ?? 0);
+
+        // Selected pricing template – authoritative source for contract financials
+        $rawSelectedPricing = $raw['rawSelectedPricing'] ?? [];
+        $data['coursePrice']          = (float) ($rawSelectedPricing['amount'] ?? $raw['allInstallmentsPrice'] ?? 0);
+        $data['monthlyInstallment']   = (float) ($rawSelectedPricing['unitAmount'] ?? 0);
+        $data['numberOfInstallments'] = (int)   ($rawSelectedPricing['numberOfUnitsAccount'] ?? 0);
 
         // Course / location data
         $courseData = $raw['courseData'] ?? [];
@@ -108,11 +113,10 @@ class PdfGeneratorService
             'periodOfPayment' => $this->getReadablePeriodOfPayment($groupData),
         ];
 
-        // Installments
-        $installments = $raw['installments'] ?? [];
-        $data['installments']      = $this->processInstallmentTableData($installments);
-        $data['installmentCount']  = count($installments);
-        $data['rawInstallments']   = $this->processRawInstallments($installments);
+        // Installments – use the full payment schedule from the selected pricing as source of truth
+        $paymentSchedule = $rawSelectedPricing['paymentShedule'] ?? $raw['installments'] ?? [];
+        $data['installments']    = $this->processInstallmentTableData($paymentSchedule);
+        $data['rawInstallments'] = $this->processRawInstallments($paymentSchedule);
 
         // Pro-rata / entry fee data
         $payZero = $raw['payZero'] ?? [];
@@ -175,16 +179,22 @@ class PdfGeneratorService
         $i    = 1;
 
         foreach ($installmentData as $inst) {
-            if (($inst['amount'] ?? 0) == 0) {
+            // Skip void installments
+            if ((int) ($inst['isVoid'] ?? 0) === 1) {
                 continue;
             }
 
-            $basePrice       = (float) ($inst['paymentPositionPrice'] ?? 0);
-            $isCompensatory  = $this->isCompensatoryInstallment($inst);
-            $discountCash    = $isCompensatory ? (float) ($inst['discountCash'] ?? 0) : 0;
-            $priceAfterDisc  = $isCompensatory
-                ? (float) ($inst['paymentPositionPriceDiscount'] ?? ($basePrice - $discountCash))
+            $basePrice = (float) ($inst['paymentPositionPrice'] ?? 0);
+            if ($basePrice == 0) {
+                continue;
+            }
+
+            $isCompensatory = $this->isCompensatoryInstallment($inst);
+            // Use paymentPositionPriceDiscount as source of truth; derive discount from the difference
+            $priceAfterDisc = $isCompensatory
+                ? (float) ($inst['paymentPositionPriceDiscount'] ?? $basePrice)
                 : $basePrice;
+            $discountCash   = $isCompensatory ? round($basePrice - $priceAfterDisc, 2) : 0;
 
             $month = $this->monthFromDate($inst['periodFromDate'] ?? '');
 
@@ -207,25 +217,33 @@ class PdfGeneratorService
     private function processRawInstallments(array $installmentData): array
     {
         $rows = [];
+        $i    = 1;
 
-        foreach ($installmentData as $index => $inst) {
-            $isCompensatory   = $this->isCompensatoryInstallment($inst);
-            $basePrice        = (float) ($inst['paymentPositionPrice'] ?? 0);
-            $discountProcent  = $isCompensatory ? ($inst['discountProcent'] ?? 0) : 0;
-            $discountCash     = $isCompensatory ? (float) ($inst['discountCash'] ?? 0) : 0;
-            $priceAfterDisc   = $isCompensatory
+        foreach ($installmentData as $inst) {
+            // Skip void installments
+            if ((int) ($inst['isVoid'] ?? 0) === 1) {
+                continue;
+            }
+
+            $isCompensatory  = $this->isCompensatoryInstallment($inst);
+            $basePrice       = (float) ($inst['paymentPositionPrice'] ?? 0);
+            $discountProcent = $isCompensatory ? ($inst['discountProcent'] ?? 0) : 0;
+            // Use paymentPositionPriceDiscount as source of truth; derive discount from the difference
+            $priceAfterDisc  = $isCompensatory
                 ? (float) ($inst['paymentPositionPriceDiscount'] ?? $basePrice)
                 : $basePrice;
+            $discountCash    = $isCompensatory ? round($basePrice - $priceAfterDisc, 2) : 0;
 
             $rows[] = [
-                'nr'                 => $index + 1,
+                'nr'                 => $i,
                 'basePrice'          => $this->formatMoney($basePrice),
                 'discountProcent'    => $isCompensatory ? $discountProcent . ' %' : '0 %',
-                'discountCash'       => $isCompensatory ? $this->formatMoney($discountCash) : '—',
+                'discountCash'       => $isCompensatory && $discountCash > 0 ? $this->formatMoney($discountCash) : '—',
                 'priceAfterDiscount' => $this->formatMoney($priceAfterDisc),
-                'paymentMonth'       => $inst['paymentMonth'] ?? '',
+                'paymentMonth'       => $this->monthFromDate($inst['periodFromDate'] ?? ''),
                 'paymentDate'        => $inst['paymentDate'] ?? '',
             ];
+            $i++;
         }
 
         return $rows;

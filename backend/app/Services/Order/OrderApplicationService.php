@@ -1,0 +1,179 @@
+<?php
+
+namespace App\Services\Order;
+
+use App\Data\Order\CreateOrderData;
+use App\Data\Order\OrderResult;
+use App\Exceptions\Order\CrmIntegrationException;
+use App\Exceptions\Order\CrmOrderException;
+use App\Exceptions\Order\LocalSyncValidationException;
+use App\Exceptions\Order\OrderAlreadyProcessingException;
+use App\Exceptions\Order\OrderIdempotencyConflictException;
+use App\Jobs\SyncOrderJob;
+use App\Models\OrderRequest;
+use App\Services\Order\CrmOrderPayloadBuilder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
+class OrderApplicationService
+{
+    /** @var CrmOrderClient */
+    private $crmClient; Ć
+
+    /** @var OrderSyncService */
+    private $syncService;
+
+    public function __construct(CrmOrderClient $crmClient, OrderSyncService $syncService)
+    {
+        $this->crmClient = $crmClient;
+        $this->syncService = $syncService;
+    }
+
+    /**
+     * Create or idempotently return an order.
+     *
+     * Flow:
+     *   1. Hash payload.
+     *   2. Find-or-create OrderRequest by guid (inside short transaction).
+     *   3. If already successful → return cached result.
+     *   4. If processing and lock is fresh → throw.
+     *   5. Mark processing, bump attempts, set locked_at.
+     *   6. Call CRM (outside DB transaction).
+     *   7. On CRM error → mark crm_failed, throw.
+     *   8. On CRM success → persist response, mark crm_success.
+     *   9. Run local sync.
+     *  10. On sync ok  → mark local_synced.
+     *  11. On sync fail → mark local_sync_failed, dispatch retry job.
+     *  12. Return OrderResult.
+     */
+    public function createOrder(CreateOrderData $data): OrderResult
+    {
+        $payloadHash = hash('sha256', json_encode($data->payload));
+
+        // ── Step 2: find-or-create inside short, locked transaction ───────────
+        $orderRequest = DB::transaction(function () use ($data, $payloadHash): OrderRequest {
+            /** @var OrderRequest $req */
+            $req = OrderRequest::lockForUpdate()
+                ->firstOrCreate(
+                    ['guid' => $data->guid],
+                    [
+                        'user_id'       => $data->userId,
+                        'payer_user_id' => $data->payerUserId,
+                        'status'        => OrderRequest::STATUS_PENDING,
+                        'payload_hash'  => $payloadHash,
+                        'payload_json'  => $data->payload,
+                    ],
+                );
+
+            // ── Step 8: idempotency conflict check ────────────────────────────
+            if ($req->payload_hash !== $payloadHash) {
+                throw new OrderIdempotencyConflictException($data->guid);
+            }
+
+            // ── Step 3: already done → return early flag ──────────────────────
+            if ($req->isAlreadySuccessful()) {
+                return $req;
+            }
+
+            // ── Step 4: processing lock ───────────────────────────────────────
+            if ($req->isProcessingFresh()) {
+                throw new OrderAlreadyProcessingException($data->guid);
+            }
+
+            // ── Step 5: claim processing slot ─────────────────────────────────
+            $req->status    = OrderRequest::STATUS_PROCESSING;
+            $req->attempts  = $req->attempts + 1;
+            $req->locked_at = now();
+            $req->save();
+
+            return $req;
+        });
+
+        // ── Step 3 early-return path ──────────────────────────────────────────
+        if ($orderRequest->isAlreadySuccessful()) {
+            return OrderResult::fromOrderRequest($orderRequest, true);
+        }
+
+        // ── Step 6: call CRM — outside DB transaction ─────────────────────────
+        try {
+            $crmUser     = \App\Models\CrmUser::find($data->userId);
+            $defaultLocId = (int) ($crmUser->Default_LocalizationsID ?? 0);
+            $crmBody     = CrmOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId);
+            $crmResponse = $this->crmClient->createOrder($crmBody, $data->guid);
+        } catch (CrmOrderException | CrmIntegrationException $e) {
+            // ── Step 7: CRM failure ───────────────────────────────────────────
+            $orderRequest->update([
+                'status'        => OrderRequest::STATUS_CRM_FAILED,
+                'error_message' => $e->getMessage(),
+                'locked_at'     => null,
+            ]);
+
+            Log::warning('CRM order creation failed', [
+                'guid'  => $data->guid,
+                'error' => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
+
+        // ── Step 8: CRM success — persist response ────────────────────────────
+        $orderRequest->update([
+            'status'               => OrderRequest::STATUS_CRM_SUCCESS,
+            'crm_response_json'    => $crmResponse->raw,
+            'crm_contracts_id'     => $crmResponse->contractsId,
+            'crm_users_products_id'=> $crmResponse->usersProductsId,
+            'crm_payments_id'      => $crmResponse->paymentsId,
+            'payment_token'        => $crmResponse->paymentToken,
+            'payment_url'          => $crmResponse->paymentUrl,
+            'locked_at'            => null,
+        ]);
+
+        // ── Step 9: local sync ────────────────────────────────────────────────
+        try {
+            $this->syncService->syncFromCrmResponse($orderRequest);
+
+            // ── Step 10: sync ok ──────────────────────────────────────────────
+            $orderRequest->update([
+                'status'       => OrderRequest::STATUS_LOCAL_SYNCED,
+                'processed_at' => now(),
+            ]);
+
+            Log::info('Order created and synced', [
+                'guid'             => $data->guid,
+                'crm_contracts_id' => $orderRequest->crm_contracts_id,
+            ]);
+        } catch (LocalSyncValidationException $e) {
+            // ── Step 11: sync fail — schedule retry ───────────────────────────
+            $orderRequest->update([
+                'status'        => OrderRequest::STATUS_LOCAL_SYNC_FAILED,
+                'error_message' => $e->getMessage(),
+            ]);
+
+            Log::error('Local sync failed after CRM success — dispatching retry', [
+                'guid'  => $data->guid,
+                'error' => $e->getMessage(),
+            ]);
+
+            SyncOrderJob::dispatch($orderRequest->id)
+                ->onQueue('orders')
+                ->delay(now()->addSeconds(15));
+        } catch (\Throwable $e) {
+            $orderRequest->update([
+                'status'        => OrderRequest::STATUS_LOCAL_SYNC_FAILED,
+                'error_message' => $e->getMessage(),
+            ]);
+
+            Log::error('Unexpected local sync error — dispatching retry', [
+                'guid'  => $data->guid,
+                'error' => $e->getMessage(),
+            ]);
+
+            SyncOrderJob::dispatch($orderRequest->id)
+                ->onQueue('orders')
+                ->delay(now()->addSeconds(15));
+        }
+
+        // ── Step 12 ───────────────────────────────────────────────────────────
+        return OrderResult::fromOrderRequest($orderRequest->fresh(), false);
+    }
+}

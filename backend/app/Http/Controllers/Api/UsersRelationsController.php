@@ -3,16 +3,19 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\PullUsersJob;
+use App\Jobs\PullUsersRelationsJob;
+use App\Services\CrmClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class UsersRelationsController extends Controller
 {
     /**
-     * Get related users by parent GUID.
+     * GET /api/users-relations/{parentGuid}
      *
-     * @param string $parentGuid
-     * @return \Illuminate\Http\JsonResponse
+     * Returns list of participants (children) related to the authenticated parent.
      */
     public function getRelatedUsers(Request $request, $parentGuid)
     {
@@ -66,5 +69,128 @@ class UsersRelationsController extends Controller
             'success' => true,
             'data' => $relatedUsers,
         ]);
+    }
+
+    /**
+     * POST /api/users-relations
+     *
+     * Creates a new participant (child account) linked to the authenticated parent.
+     *
+     * Body (JSON):
+     *   firstName                       string  required
+     *   lastName                        string  required
+     *   dateOfBirth                     string  required  Y-m-d
+     *   pesel                           string  optional
+     *   genderDVID                      int     optional  (0 = unset)
+     *   personalDataProcessingConsent   int     optional  0|1
+     *   consentReceiveSmsEmailPhone     int     optional  0|1
+     *   marketingAgreement              int     optional  0|1
+     *   phone                           string  optional
+     *   email                           string  optional
+     */
+    public function store(Request $request, CrmClient $crmClient)
+    {
+        $authUser = $request->user();
+
+        $validated = $request->validate([
+            'firstName'                      => ['required', 'string', 'max:100'],
+            'lastName'                       => ['required', 'string', 'max:100'],
+            'dateOfBirth'                    => ['required', 'date_format:Y-m-d'],
+            'pesel'                          => ['sometimes', 'nullable', 'string', 'max:11'],
+            'genderDVID'                     => ['sometimes', 'nullable', 'integer'],
+            'personalDataProcessingConsent'  => ['sometimes', 'nullable', 'integer', 'in:0,1'],
+            'consentReceiveSmsEmailPhone'    => ['sometimes', 'nullable', 'integer', 'in:0,1'],
+            'marketingAgreement'             => ['sometimes', 'nullable', 'integer', 'in:0,1'],
+            'phone'                          => ['sometimes', 'nullable', 'string', 'max:30'],
+            'email'                          => ['sometimes', 'nullable', 'email', 'max:255'],
+        ]);
+
+        $crmPayload = [
+            'usersID'                       => 0,
+            'active'                        => '1',
+            'dateOfBirdth'                  => $validated['dateOfBirth'],
+            'postalCode'                    => '',
+            'postPlace'                     => '',
+            'memberCardNumber'              => '',
+            'lastName'                      => $validated['lastName'],
+            'firstName'                     => $validated['firstName'],
+            'email'                         => $validated['email'] ?? '',
+            'address'                       => '',
+            'login'                         => $validated['email'] ?? '',
+            'password'                      => '',
+            'phone'                         => $validated['phone'] ?? '',
+            'city'                          => '',
+            'default_LocalizationsID'       => (string) ($authUser->Default_LocalizationsID ?? 0),
+            'parent_UsersID'                => (int) $authUser->UsersID,
+            'street'                        => '',
+            'building'                      => '',
+            'flat'                          => '',
+            'description'                   => '',
+            'genderDVID'                    => (int) ($validated['genderDVID'] ?? 0),
+            'genderName'                    => '',
+            'identityNumber'                => '',
+            'pesel'                         => $validated['pesel'] ?? '',
+            'entryFee'                      => 0,
+            'activationDate'                => null,
+            'paymentMethodsDVID'            => 0,
+            'paymentMethodsName'            => '',
+            'personalDataProcessingConsent' => (int) ($validated['personalDataProcessingConsent'] ?? 0),
+            'consentReceiveSmsEmailPhone'   => (int) ($validated['consentReceiveSmsEmailPhone'] ?? 0),
+            'marketingAgreement'            => (int) ($validated['marketingAgreement'] ?? 0),
+            'fileName'                      => '',
+            'fileExtension'                 => '',
+            'positionsDVID'                 => 0,
+            'employeesID'                   => 0,
+            'statusUser'                    => 'Lead',
+            'colorStatus'                   => '',
+            'userStatus'                    => 3,
+            'bankAccount'                   => '',
+            'fileURL'                       => '',
+            'cancelled'                     => '0',
+            'birthPlace'                    => '',
+            'voivodeshipDVID'               => '',
+            'comunity'                      => '',
+            'district'                      => '',
+            'localizationsID'               => null,
+            'localizationsIDArray'          => [(int) ($authUser->Default_LocalizationsID ?? 0)],
+            'current_LocalizationsID'       => (string) ($authUser->Default_LocalizationsID ?? 0),
+        ];
+
+        try {
+            $crmResp = $crmClient->post('/CrmToMobileSync/setUsersForLocalization', $crmPayload);
+
+            Log::info('UsersRelations store: CRM response', [
+                'parent_id' => $authUser->UsersID,
+                'status'    => $crmResp->status(),
+            ]);
+
+            if (!$crmResp->successful()) {
+                throw new \Exception('CRM returned non-success status: ' . $crmResp->status());
+            }
+        } catch (\Exception $e) {
+            Log::error('UsersRelations store: CRM call failed', [
+                'parent_id' => $authUser->UsersID,
+                'error'     => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Nie udało się zapisać uczestnika w systemie. Spróbuj ponownie.',
+            ], 500);
+        }
+
+        // Sync updated users and relations back from CRM
+        try {
+            PullUsersJob::dispatch();
+            PullUsersRelationsJob::dispatch();
+        } catch (\Throwable $e) {
+            Log::warning('UsersRelations store: sync jobs failed after CRM write', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Uczestnik został dodany.',
+        ], 201);
     }
 }

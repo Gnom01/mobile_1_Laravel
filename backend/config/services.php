@@ -42,7 +42,8 @@ return [
         'username' => env('CRM_USERNAME'),
         'password' => env('CRM_PASSWORD'),
         'portal_base_url' => env('CRM_PORTAL_BASE_URL', env('CRM_BASE_URL')),
-        'portal_orders_endpoint' => env('CRM_PORTAL_ORDERS_ENDPOINT', '/Orders/CalculateProductForUser'),
+        'portal_orders_endpoint'         => env('CRM_PORTAL_ORDERS_ENDPOINT', '/Orders/createOrder'),
+        'portal_order_snapshot_endpoint' => env('CRM_PORTAL_ORDER_SNAPSHOT_ENDPOINT', '/Orders/GetOrderSnapshot'),
         'payment_token_url_template' => env('CRM_PAYMENT_TOKEN_URL_TEMPLATE', 'https://secure.przelewy24.pl/trnRequest/{token}'),
         'mobile_checkout_return_url' => env('CRM_MOBILE_CHECKOUT_RETURN_URL', env('APP_URL')),
         'verify_tls' => filter_var(
