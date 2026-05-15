@@ -155,8 +155,8 @@ class OrderApplicationService
 
                     $paymentToken = $paymentData['token'] ?? $paymentData['html'] ?? null;
                     if ($paymentToken) {
-                        $template   = (string) config('services.crm.payment_token_url_template', '');
-                        $paymentUrl = $template !== '' ? str_replace('{token}', (string) $paymentToken, $template) : null;
+                        // CRM zwraca gotowy URL płatności w polu 'token' — używamy go bezpośrednio
+                        $paymentUrl = (string) $paymentToken;
                     }
                 }
             } catch (\Throwable $e) {
