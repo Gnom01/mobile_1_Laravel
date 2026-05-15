@@ -98,10 +98,14 @@ class PaymentController extends Controller
         }
 
         $isSelf = (int) $targetUser->UsersID === (int) $authUser->UsersID;
-        $isRelated = UsersRelation::where('Cancelled', 0)
-            ->where('Parent_UsersID', $authUser->UsersID)
-            ->where('UsersID', $targetUser->UsersID)
-            ->exists();
+
+        $relatedIds = UsersRelation::where('Parent_UsersID', $authUser->UsersID)
+            ->where('Cancelled', 0)
+            ->pluck('UsersID')
+            ->map(fn ($id) => (int) $id)
+            ->toArray();
+
+        $isRelated = in_array((int) $targetUser->UsersID, $relatedIds);
 
         if (!$isSelf && !$isRelated) {
             return response()->json([
@@ -136,11 +140,11 @@ class PaymentController extends Controller
                 AND p.paymentStatusesDVID IN (1,2,3,4)
                 AND p.paymentMethodsDVID <> 4
                 AND (
-                    p.usersID = :usersID1
-                    OR p.payer_UsersID = :usersID2
+                    p.usersID = :usersID
+                    OR p.payer_UsersID = :usersID
                     OR EXISTS (
                         SELECT 1 FROM usersrelations ur
-                        WHERE ur.Parent_UsersID = :usersID3      
+                        WHERE ur.Parent_UsersID = :usersID
                             AND ur.UsersID = p.payer_UsersID  
                             AND ur.Cancelled = 0
                             AND ur.ParticipantRelationsDVID IN (1,2)
@@ -150,11 +154,7 @@ class PaymentController extends Controller
             ORDER BY p.paymentsID DESC
         ";
 
-        $allPayment = DB::select($parentSql, [
-            'usersID1' => $usersID,
-            'usersID2' => $usersID,
-            'usersID3' => $usersID
-        ]);
+        $allPayment = DB::select($parentSql, ['usersID' => $usersID]);
 
         // Deduplicate – LEFT JOIN paymentsitems/userspaymentsschedules may produce
         // multiple rows per payment; keep first occurrence (which carries positionName).
@@ -166,11 +166,11 @@ class PaymentController extends Controller
         foreach ($allPayment as $index => $payment) {
             $childSql = "
                 WITH family AS (
-                    SELECT :usersID1 AS UsersID
+                    SELECT :usersID AS UsersID
                     UNION
                     SELECT ur.UsersID
                     FROM usersrelations ur
-                    WHERE ur.Parent_UsersID = :usersID2
+                    WHERE ur.Parent_UsersID = :usersID
                     AND ur.Cancelled = 0
                 )
                 SELECT
@@ -212,9 +212,8 @@ class PaymentController extends Controller
             ";
 
             $allPayment[$index]->allPayments = DB::select($childSql, [
-                'usersID1' => $usersID,
-                'usersID2' => $usersID,
-                'paymentsID' => $payment->paymentsID
+                'usersID'    => $usersID,
+                'paymentsID' => $payment->paymentsID,
             ]);
         }
 
