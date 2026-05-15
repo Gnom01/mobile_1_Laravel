@@ -116,7 +116,18 @@ class PaymentController extends Controller
 
         $usersID = (int) $targetUser->UsersID;
 
+        // Build full list: target user + their family members
+        $familyIds = UsersRelation::where('Parent_UsersID', $usersID)
+            ->where('Cancelled', 0)
+            ->pluck('UsersID')
+            ->map(fn ($id) => (int) $id)
+            ->toArray();
+
+        $allUserIds = array_values(array_unique(array_merge([$usersID], $familyIds)));
+
         // 2. Fetch Parent Payments
+        $placeholders = implode(',', array_fill(0, count($allUserIds), '?'));
+
         $parentSql = "
             SELECT 
                 p.usersID, p.paymentsID, p.paymentDate, p.cancelled, p.paymentMethodsDVID,
@@ -139,26 +150,16 @@ class PaymentController extends Controller
             WHERE p.cancelled = 0
                 AND p.paymentStatusesDVID IN (1,2,3,4)
                 AND p.paymentMethodsDVID <> 4
+                AND p.paymentAmount > 0
                 AND (
-                    p.usersID = :usersID1
-                    OR p.payer_UsersID = :usersID2
-                    OR EXISTS (
-                        SELECT 1 FROM usersrelations ur
-                        WHERE ur.Parent_UsersID = :usersID3
-                            AND ur.UsersID = p.payer_UsersID  
-                            AND ur.Cancelled = 0
-                            AND ur.ParticipantRelationsDVID IN (1,2)
-                    )
+                    p.usersID IN ($placeholders)
+                    OR p.payer_UsersID IN ($placeholders)
+                    OR pi.usersID IN ($placeholders)
                 )
-              AND p.paymentAmount > 0
             ORDER BY p.paymentsID DESC
         ";
 
-        $allPayment = DB::select($parentSql, [
-            'usersID1' => $usersID,
-            'usersID2' => $usersID,
-            'usersID3' => $usersID,
-        ]);
+        $allPayment = DB::select($parentSql, array_merge($allUserIds, $allUserIds, $allUserIds));
 
         // Deduplicate – LEFT JOIN paymentsitems/userspaymentsschedules may produce
         // multiple rows per payment; keep first occurrence (which carries positionName).
@@ -167,82 +168,74 @@ class PaymentController extends Controller
         );
 
         // 3. For each payment, fetch child items
-        foreach ($allPayment as $index => $payment) {
-            $childSql = "
-                SELECT
-                    pis.vatRatesIK,
-                    pr.productsLevel2DVID,
-                    pis.usersID,
-                    pis.paymentsItemsID,
-                    p.paymentsID,
-                    p.paymentDate,
-                    p.cancelled,
-                    p.paymentMethodsDVID,
-                    d.Name  AS paymentMethodsName,
-                    p.recepcionist_UsersID,
-                    u.fullName,
-                    pis.localizationsID,
-                    l.localizationName,
-                    pis.paymentItemAmount,
-                    pis.productsID,
-                    pr.productName,
-                    d2.Name AS productTapeName,
-                    d1.Name AS productPaymentsName,
-                    pr.paymentTypesDVID,
-                    pis.itemName,
-                    ups.paymentStatusesDVID,
-                    d3.Name AS paymentStatusesName,
-                    pis.contractsID
-                FROM paymentsitems pis
-                LEFT JOIN payments p
-                    ON p.paymentsID = pis.paymentsID
-                    AND p.cancelled = 0
-                LEFT JOIN dictionaries d
-                    ON d.valueID = p.paymentMethodsDVID
-                    AND d.DictionaryName = 'PaymentMethods'
-                    AND d.Cancelled = 0
-                LEFT JOIN users u
-                    ON p.usersID = u.UsersID
-                    AND u.Cancelled = 0
-                LEFT JOIN localizations l
-                    ON l.LocalizationsID = pis.localizationsID
-                    AND l.Cancelled = 0
-                LEFT JOIN products pr
-                    ON pr.ProductsID = pis.productsID
-                    AND pr.Cancelled = 0
-                LEFT JOIN dictionaries d1
-                    ON d1.DictionaryName = 'paymentTypes'
-                    AND pr.paymentTypesDVID = d1.ValueID
-                    AND d1.Cancelled = 0
-                LEFT JOIN dictionaries d2
-                    ON d2.DictionaryName = 'ProductsLevel2'
-                    AND pr.ProductsLevel2DVID = d2.ValueID
-                    AND d2.Cancelled = 0
-                LEFT JOIN userspaymentsschedules ups
-                    ON ups.usersPaymentsSchedulesID = pis.usersPaymentsSchedulesID
-                    AND ups.cancelled = 0
-                LEFT JOIN dictionaries d3
-                    ON d3.DictionaryName = 'PaymentStatuses'
-                    AND p.paymentStatusesDVID = d3.ValueID
-                    AND d3.Cancelled = 0
-                WHERE p.paymentsID = :paymentsID
-                    AND (
-                        pis.usersID = :usersID1
-                        OR EXISTS (
-                            SELECT 1
-                            FROM usersrelations ur
-                            WHERE ur.Parent_UsersID = :usersID2
-                                AND ur.UsersID = pis.usersID
-                                AND ur.Cancelled = 0
-                        )
-                    )
-            ";
+        $childPlaceholders = implode(',', array_fill(0, count($allUserIds), '?'));
 
-            $allPayment[$index]->allPayments = DB::select($childSql, [
-                'usersID1'   => $usersID,
-                'usersID2'   => $usersID,
-                'paymentsID' => $payment->paymentsID,
-            ]);
+        $childSql = "
+            SELECT
+                pis.vatRatesIK,
+                pr.productsLevel2DVID,
+                pis.usersID,
+                pis.paymentsItemsID,
+                p.paymentsID,
+                p.paymentDate,
+                p.cancelled,
+                p.paymentMethodsDVID,
+                d.Name  AS paymentMethodsName,
+                p.recepcionist_UsersID,
+                u.fullName,
+                pis.localizationsID,
+                l.localizationName,
+                pis.paymentItemAmount,
+                pis.productsID,
+                pr.productName,
+                d2.Name AS productTapeName,
+                d1.Name AS productPaymentsName,
+                pr.paymentTypesDVID,
+                pis.itemName,
+                ups.paymentStatusesDVID,
+                d3.Name AS paymentStatusesName,
+                pis.contractsID
+            FROM paymentsitems pis
+            LEFT JOIN payments p
+                ON p.paymentsID = pis.paymentsID
+                AND p.cancelled = 0
+            LEFT JOIN dictionaries d
+                ON d.valueID = p.paymentMethodsDVID
+                AND d.DictionaryName = 'PaymentMethods'
+                AND d.Cancelled = 0
+            LEFT JOIN users u
+                ON p.usersID = u.UsersID
+                AND u.Cancelled = 0
+            LEFT JOIN localizations l
+                ON l.LocalizationsID = pis.localizationsID
+                AND l.Cancelled = 0
+            LEFT JOIN products pr
+                ON pr.ProductsID = pis.productsID
+                AND pr.Cancelled = 0
+            LEFT JOIN dictionaries d1
+                ON d1.DictionaryName = 'paymentTypes'
+                AND pr.paymentTypesDVID = d1.ValueID
+                AND d1.Cancelled = 0
+            LEFT JOIN dictionaries d2
+                ON d2.DictionaryName = 'ProductsLevel2'
+                AND pr.ProductsLevel2DVID = d2.ValueID
+                AND d2.Cancelled = 0
+            LEFT JOIN userspaymentsschedules ups
+                ON ups.usersPaymentsSchedulesID = pis.usersPaymentsSchedulesID
+                AND ups.cancelled = 0
+            LEFT JOIN dictionaries d3
+                ON d3.DictionaryName = 'PaymentStatuses'
+                AND p.paymentStatusesDVID = d3.ValueID
+                AND d3.Cancelled = 0
+            WHERE p.paymentsID = ?
+                AND pis.usersID IN ($childPlaceholders)
+        ";
+
+        foreach ($allPayment as $index => $payment) {
+            $allPayment[$index]->allPayments = DB::select(
+                $childSql,
+                array_merge([$payment->paymentsID], $allUserIds)
+            );
         }
 
         return response()->json([
