@@ -120,6 +120,7 @@ class PasswordResetController
                 'Email'     => $u->Email,
                 'Login'     => $u->Login,
                 'FirstName' => $u->FirstName,
+                'RolesID'   => $u->RolesID,
                 'LastName'  => $u->LastName,
             ])->values(),
         ]);
