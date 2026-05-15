@@ -23,7 +23,7 @@ class OrderSyncService
      *
      * @throws LocalSyncValidationException
      */
-    public function syncFromCrmResponse(OrderRequest $orderRequest): SyncResult
+    public function syncFromCrmResponse(OrderRequest $orderRequest): SyncResult 
     {
         $crm  = $orderRequest->crm_response_json ?? [];
         $guid = $orderRequest->guid;

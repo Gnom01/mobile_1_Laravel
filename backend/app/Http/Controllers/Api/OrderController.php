@@ -30,10 +30,25 @@ class OrderController extends Controller
      */
     public function store(CreateOrderRequest $request): JsonResponse
     {
-        $data = CreateOrderData::fromArray(
-            $request->all(),
-            (int) $request->user()->getKey(),
-        );
+        try {
+            $data = CreateOrderData::fromArray(
+                $request->all(),
+                (int) $request->user()->getKey(),
+            );
+        } catch (\Throwable $e) {
+            Log::error('OrderController: błąd podczas budowania CreateOrderData', [
+                'exception' => get_class($e),
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine(),
+                'payload'   => $request->except(['password']),
+            ]);
+            return response()->json([
+                'message' => 'Błąd przetwarzania danych zamówienia.',
+                'code'    => 'order_data_error',
+                'detail'  => $e->getMessage(),
+            ], 500);
+        }
 
         try {
             $result = $this->orderService->createOrder($data);
@@ -65,6 +80,20 @@ class OrderController extends Controller
                 'message' => 'Serwis zamówień jest chwilowo niedostępny. Spróbuj ponownie.',
                 'code'    => 'crm_integration_error',
             ], 503);
+        } catch (\Throwable $e) {
+            Log::error('OrderController: nieoczekiwany błąd podczas tworzenia zamówienia', [
+                'guid'      => $data->guid ?? null,
+                'exception' => get_class($e),
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine(),
+                'trace'     => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'message' => 'Nieoczekiwany błąd serwera.',
+                'code'    => 'server_error',
+                'detail'  => $e->getMessage(),
+            ], 500);
         }
 
         $httpStatus = $result->wasAlreadyProcessed ? 200 : 201;
