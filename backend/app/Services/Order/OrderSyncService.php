@@ -120,12 +120,20 @@ class OrderSyncService
         $attributes = array_merge($data, ['crm_order_guid' => $guid]);
         unset($attributes['contractsID'], $attributes['contractsId']);
 
-        Contract::withoutGlobalScopes()->updateOrCreate(
-            ['contractsID' => $contractsId],
-            $attributes,
-        );
+        $contract = Contract::withoutGlobalScopes()
+            ->firstOrNew(['contractsID' => $contractsId]);
 
-        return Contract::find($contractsId);
+        if (!$contract->exists) {
+            // Required NOT NULL fields without defaults — set on first insert only
+            $now = now();
+            $contract->whenInserted = $attributes['whenInserted'] ?? $now;
+            $contract->whenUpdated  = $attributes['whenUpdated']  ?? $now;
+            $contract->contractsBulksIDS = $attributes['contractsBulksIDS'] ?? 0;
+        }
+
+        $contract->fill($attributes)->save();
+
+        return $contract;
     }
 
     private function upsertUsersProduct(int $id, array $data, string $guid): void
