@@ -40,7 +40,9 @@ class CrmOrderClient
         $safePayload = $this->sanitizePayload($crmBody);
 
         // CRM /Orders/createOrder expects a flat JSON body (no envelope wrapper)
-        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $crmBody, $guid);
+        // allowRetry=false: CRM createOrder is NOT idempotent (guid check uses usersBaskets
+        // which is written at the END of the flow), so retries create duplicate contracts.
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $crmBody, $guid, false);
 
         // CRM may prepend PHP notices (HTML) before the JSON — extract the JSON part
         $parsed  = $this->extractCrmJson($rawBody);
@@ -113,12 +115,117 @@ class CrmOrderClient
         return CrmOrderSnapshot::fromArray($body);
     }
 
+    /**
+     * Fetch payment schedules for an existing contract.
+     * Called after createOrder to get the usersPaymentsSchedulesID list needed
+     * to initiate the online payment step.
+     */
+    public function fetchPaymentSchedules(
+        int    $contractsId,
+        int    $usersId,
+        int    $localizationsId,
+        string $guid
+    ): ?array {
+        $endpoint = '/Orders/CalculateProductForUser';
+        $payload  = [
+            'keyController'           => 'paymentByContractsID',
+            'contractsID'             => $contractsId,
+            'usersID'                 => $usersId,
+            'current_LocalizationsID' => $localizationsId,
+        ];
+
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, true);
+        $body = $this->parseCrmBodyResponse($rawBody['__raw'] ?? '');
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($body), $httpStatus, $durationMs, $error);
+
+        if ($error !== null || $httpStatus >= 400) {
+            Log::warning('CRM fetchPaymentSchedules failed', [
+                'contractsId' => $contractsId,
+                'error'       => $error,
+                'httpStatus'  => $httpStatus,
+            ]);
+            return null;
+        }
+
+        $crmStatus = (int) ($body['status'] ?? 200);
+        if ($crmStatus >= 400) {
+            Log::warning('CRM fetchPaymentSchedules business error', [
+                'crmStatus' => $crmStatus,
+                'message'   => $body['message'] ?? '',
+            ]);
+            return null;
+        }
+
+        return $body;
+    }
+
+    /**
+     * Initiate online payment for given schedule IDs (P24 / PayNow).
+     * CRM calls OnLineSchedulePayment which registers the transaction and returns a token.
+     *
+     * $scheduleIds — usersPaymentsSchedulesID values from fetchPaymentSchedules
+     * Returns ['token' => '...', 'sessionID' => '...', 'html' => '...'] or null on failure.
+     */
+    public function initiateOnlinePayment(
+        array  $scheduleIds,
+        int    $usersId,
+        int    $localizationsId,
+        int    $paymentMethodsDvid,
+        string $returnUrl,
+        string $guid
+    ): ?array {
+        $endpoint = '/Orders/CalculateProductForUser';
+
+        // CRM OnLineSchedulePayment parses "x/usersID/scheduleID" per entry, comma-separated
+        $schedulesParam = implode(',', array_map(
+            fn (int $id) => "0/{$usersId}/{$id}",
+            $scheduleIds
+        ));
+
+        $payload = [
+            'keyController'            => 'onLineSchedulePayment',
+            'usersPaymentsSchedulesID' => $schedulesParam,
+            'usersID'                  => $usersId,
+            'current_LocalizationsID'  => $localizationsId,
+            'paymentMethodsDVID'       => $paymentMethodsDvid,
+            'urlLink'                  => $returnUrl,
+            'NIP'                      => '',
+        ];
+
+        // allowRetry=false: creating a payment is not idempotent
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, false);
+        $body = $this->parseCrmBodyResponse($rawBody['__raw'] ?? '');
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($body), $httpStatus, $durationMs, $error);
+
+        if ($error !== null || $httpStatus >= 400) {
+            Log::warning('CRM initiateOnlinePayment failed', [
+                'guid'       => $guid,
+                'error'      => $error,
+                'httpStatus' => $httpStatus,
+            ]);
+            return null;
+        }
+
+        $crmStatus = (int) ($body['status'] ?? 200);
+        if ($crmStatus >= 400) {
+            Log::warning('CRM initiateOnlinePayment business error', [
+                'crmStatus' => $crmStatus,
+                'message'   => $body['message'] ?? '',
+            ]);
+            return null;
+        }
+
+        return $body;
+    }
+
     // ─── Internal ──────────────────────────────────────────────────────────────
 
     /**
+     * @param  bool  $allowRetry  Set to false for non-idempotent POST calls (createOrder)
+     *                            to avoid duplicate records when CRM is slow.
      * @return array{array, int, int, string|null}  [body, httpStatus, durationMs, errorMessage]
      */
-    private function executeWithRetry(string $method, string $endpoint, array $payload, string $guid): array
+    private function executeWithRetry(string $method, string $endpoint, array $payload, string $guid, bool $allowRetry = true): array
     {
         $token     = $this->resolveToken();
         $url       = $this->baseUrl . $endpoint;
@@ -132,7 +239,8 @@ class CrmOrderClient
             if (!config('services.crm.verify_tls', true)) {
                 $http = $http->withoutVerifying();
             }
-            $http = $http->retry(2, 1000, function (\Throwable $exception, $response): bool {
+            if ($allowRetry) {
+                $http = $http->retry(2, 1000, function (\Throwable $exception, $response): bool {
                     if ($exception instanceof ConnectionException) {
                         return true;
                     }
@@ -141,6 +249,7 @@ class CrmOrderClient
                     }
                     return false;
                 }, false);
+            }
 
             switch (strtoupper($method)) {
                 case 'POST':
@@ -156,7 +265,21 @@ class CrmOrderClient
 
             $status = $response->status();
             // Response may contain HTML (PHP notices) + JSON — store raw for parsing later
-            $body   = ['__raw' => $response->body()];
+            $rawResponseBody = $response->body();
+            $body   = ['__raw' => $rawResponseBody];
+
+            Log::debug('[CRM RAW] żądanie do CRM', [
+                'guid'     => $guid,
+                'method'   => $method,
+                'url'      => $url,
+                'payload'  => $payload,
+            ]);
+            Log::debug('[CRM RAW] odpowiedź z CRM', [
+                'guid'       => $guid,
+                'url'        => $url,
+                'httpStatus' => $status,
+                'body'       => $rawResponseBody,
+            ]);
         } catch (ConnectionException $e) {
             $error = $e->getMessage();
         } catch (\Throwable $e) {
@@ -169,8 +292,36 @@ class CrmOrderClient
     }
 
     /**
+     * Parse CRM response body using first-occurrence of '{'.
+     * Unlike extractCrmJson (which uses strrpos and is safe for simple flat responses),
+     * this method correctly handles nested arrays like instalmets/contracts.
+     * Returns the inner 'body' if the CRM envelope is detected, otherwise the decoded object.
+     */
+    private function parseCrmBodyResponse(string $rawBody): array
+    {
+        if ($rawBody === '') {
+            return [];
+        }
+        $rawBody    = ltrim($rawBody, "\xEF\xBB\xBF");
+        $firstBrace = strpos($rawBody, '{');
+        if ($firstBrace === false) {
+            return [];
+        }
+        $decoded = json_decode(substr($rawBody, $firstBrace), true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+        // CRM envelope: { status, message, token, body: {...} }
+        if (isset($decoded['body']) && is_array($decoded['body'])) {
+            return $decoded['body'];
+        }
+        return $decoded;
+    }
+
+    /**
      * CRM sometimes prepends PHP notices (HTML) before the JSON response.
      * Extracts and decodes the JSON from the raw response body.
+     * Returns the full CRM envelope (status, message, token, body, …).
      */
     private function extractCrmJson(array $raw): array
     {
@@ -182,11 +333,10 @@ class CrmOrderClient
         // Strip UTF-8 BOM
         $rawBody = ltrim($rawBody, "\xEF\xBB\xBF");
 
-        // Find last '{' that starts the JSON object
-        $jsonStart = strrpos($rawBody, '{"');
+        // Find the first '{' — start of the CRM JSON envelope (skips any leading PHP notices/HTML)
+        $jsonStart = strpos($rawBody, '{');
         if ($jsonStart !== false) {
-            $jsonStr = substr($rawBody, $jsonStart);
-            $decoded = json_decode($jsonStr, true);
+            $decoded = json_decode(substr($rawBody, $jsonStart), true);
             if (is_array($decoded)) {
                 return $decoded;
             }

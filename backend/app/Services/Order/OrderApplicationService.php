@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Log;
 class OrderApplicationService
 {
     /** @var CrmOrderClient */
-    private $crmClient; Ć
+    private $crmClient;
 
     /** @var OrderSyncService */
     private $syncService;
@@ -98,7 +98,7 @@ class OrderApplicationService
         try {
             $crmUser     = \App\Models\CrmUser::find($data->userId);
             $defaultLocId = (int) ($crmUser->Default_LocalizationsID ?? 0);
-            $crmBody     = CrmOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId);
+            $crmBody     = CrmOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);
             $crmResponse = $this->crmClient->createOrder($crmBody, $data->guid);
         } catch (CrmOrderException | CrmIntegrationException $e) {
             // ── Step 7: CRM failure ───────────────────────────────────────────
@@ -116,6 +116,60 @@ class OrderApplicationService
             throw $e;
         }
 
+        // ── Step 7.5: initiate online payment (non-fatal) ────────────────────────
+        // CRM createOrder only creates documents; payment URL must be obtained by a
+        // separate call to OnLineSchedulePayment with the newly created schedule IDs.
+        $paymentToken = null;
+        $paymentUrl   = null;
+
+        if ((int) ($crmBody['paymentMethodsDVID'] ?? 0) === 5 && $crmResponse->contractsId > 0) {
+            try {
+                $localizationsId = (int) ($crmBody['current_LocalizationsID'] ?? 0);
+                $usersId         = (int) ($crmBody['usersID'] ?? $data->userId);
+
+                $schedules = $this->crmClient->fetchPaymentSchedules(
+                    $crmResponse->contractsId,
+                    $usersId,
+                    $localizationsId,
+                    $data->guid
+                );
+
+                // CRM uses typo key 'instalmets' (not 'installments')
+                $scheduleIds = array_values(array_filter(
+                    array_map(
+                        fn ($s) => (int) ($s['usersPaymentsSchedulesID'] ?? 0),
+                        $schedules['instalmets'] ?? []
+                    )
+                ));
+
+                if (!empty($scheduleIds)) {
+                    $returnUrl   = (string) ($crmBody['returnUrl'] ?? config('services.crm.mobile_checkout_return_url', ''));
+                    $paymentData = $this->crmClient->initiateOnlinePayment(
+                        $scheduleIds,
+                        $usersId,
+                        $localizationsId,
+                        5,
+                        $returnUrl,
+                        $data->guid
+                    );
+
+                    $paymentToken = $paymentData['token'] ?? $paymentData['html'] ?? null;
+                    if ($paymentToken) {
+                        $template   = (string) config('services.crm.payment_token_url_template', '');
+                        $paymentUrl = $template !== '' ? str_replace('{token}', (string) $paymentToken, $template) : null;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Non-fatal: order was created; Flutter will receive payment_url=null
+                // and should allow the user to retry payment from the order detail screen.
+                Log::warning('Payment initiation after createOrder failed (non-fatal)', [
+                    'guid'         => $data->guid,
+                    'contracts_id' => $crmResponse->contractsId,
+                    'error'        => $e->getMessage(),
+                ]);
+            }
+        }
+
         // ── Step 8: CRM success — persist response ────────────────────────────
         $orderRequest->update([
             'status'               => OrderRequest::STATUS_CRM_SUCCESS,
@@ -123,8 +177,8 @@ class OrderApplicationService
             'crm_contracts_id'     => $crmResponse->contractsId,
             'crm_users_products_id'=> $crmResponse->usersProductsId,
             'crm_payments_id'      => $crmResponse->paymentsId,
-            'payment_token'        => $crmResponse->paymentToken,
-            'payment_url'          => $crmResponse->paymentUrl,
+            'payment_token'        => $paymentToken,
+            'payment_url'          => $paymentUrl,
             'locked_at'            => null,
         ]);
 

@@ -1554,4 +1554,98 @@ class CourseHeadingPricingService
         }
         return !empty($row->ValueText) ? $row->ValueText : ($row->Name ?? '');
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // ENTRY FEE CHECK
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * 1:1 port of CRM checkForEntryFee.
+     *
+     * Returns false   → user already has entryFee=1 (paid/exempt), no entry fee needed.
+     * Returns array   → entry fee product data that should be offered to the user.
+     * Returns null    → no entry fee product configured in the system.
+     *
+     * @param int $usersID           CRM usersID of the student/buyer
+     * @param int $localizationsID   Localization to look up the product for
+     * @return array|false|null
+     */
+    public function checkForEntryFee(int $usersID, int $localizationsID): array|false|null
+    {
+        // Step 1: check if the user already has entryFee=1 (already paid or exempt).
+        // Mirror of CRM checkEntryFeeForUsersIDData – Products (Level1=4, Level2=11)
+        // joined with users where entryFee=1.
+        $alreadyPaid = DB::table('products as p')
+            ->join('users as u', function ($join) use ($usersID) {
+                $join->where('u.UsersID', '=', $usersID)
+                     ->where('u.Cancelled', '=', 0)
+                     ->where('u.entryFee', '=', 1);
+            })
+            ->leftJoin('localizations as l', 'p.localizationsID', '=', DB::raw('0'))
+            ->where('p.cancelled', 0)
+            ->where('p.ProductsLevel1DVID', 4)
+            ->where('p.ProductsLevel2DVID', 11)
+            ->orderByDesc('p.ProductsID')
+            ->select([
+                'p.productsID',
+                'p.PaymentTypesDVID',
+                'p.periodsOfValidityDVID',
+                'p.numberOfPeriods',
+                'p.unitsOfAccountDVID',
+                'p.numberOfUnitsAccount',
+                'p.unitPrice',
+                'p.price',
+                'p.vatRatesIK',
+                'p.productName',
+                'l.Default_VatRatesIK',
+            ])
+            ->first();
+
+        if ($alreadyPaid && (int)$alreadyPaid->productsID > 0) {
+            // User already has entry fee paid/exempt → no entry fee to charge.
+            return false;
+        }
+
+        // Step 2: user has entryFee=0 → get the entry fee product for this localization.
+        // Mirror of CRM getEntyFeeForLocalizationsIDData.
+        $product = DB::table('products as p')
+            ->join('users as u', function ($join) use ($usersID) {
+                $join->where('u.UsersID', '=', $usersID)
+                     ->where('u.Cancelled', '=', 0)
+                     ->where('u.entryFee', '=', 0);
+            })
+            ->leftJoin('localizations as l', function ($join) use ($localizationsID) {
+                $join->on('p.localizationsID', '=', DB::raw('0'))
+                     ->where('l.localizationsID', '=', $localizationsID);
+            })
+            ->where('p.cancelled', 0)
+            ->where('p.ProductsLevel1DVID', 4)
+            ->where('p.ProductsLevel2DVID', 11)
+            ->where(function ($q) use ($localizationsID) {
+                $q->where('p.localizationsID', $localizationsID)
+                  ->orWhere('p.localizationsID', 0);
+            })
+            ->orderByDesc('p.localizationsID')
+            ->select([
+                'p.productsID',
+                'p.PaymentTypesDVID',
+                'p.periodsOfValidityDVID',
+                'p.numberOfPeriods',
+                'p.unitsOfAccountDVID',
+                'p.numberOfUnitsAccount',
+                'p.unitPrice',
+                'p.price',
+                'p.vatRatesIK',
+                'p.productName',
+                'u.entryFee',
+                'l.Default_VatRatesIK',
+            ])
+            ->first();
+
+        if (!$product) {
+            return null; // No entry fee product configured in the system.
+        }
+
+        return (array) $product;
+    }
 }

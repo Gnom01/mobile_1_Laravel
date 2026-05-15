@@ -18,7 +18,8 @@ class CreateOrderRequest extends FormRequest
             'guid'                         => ['required', 'string', 'uuid'],
 
             // CRM user IDs (student + payer)
-            'usersID'                      => ['nullable', 'integer', 'min:1'],
+            // usersID is now sent as a GUID (UUID) by Flutter; resolved to integer in CreateOrderData
+            'usersID'                      => ['nullable', 'string', 'uuid'],
             'payerUserId'                  => ['nullable', 'integer', 'min:1'],
             'payer_UsersID'                => ['nullable', 'integer', 'min:1'],
 

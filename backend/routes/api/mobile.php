@@ -50,6 +50,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Pricing
     Route::get('/pricing/course/{coursesHeadingsID}', [PricingController::class, 'getPriceByCourseHeadingsID']);
     Route::post('/GetPriceByCourseHeadingsID', [PricingController::class, 'getPrice']);
+    Route::get('/pricing/entry-fee', [PricingController::class, 'checkEntryFee']);
 
     // Orders (CRM-first)
     Route::post('/orders', [OrderController::class, 'store']);

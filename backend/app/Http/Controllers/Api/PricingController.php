@@ -76,4 +76,52 @@ class PricingController extends Controller
 
         return response()->json($result);
     }
+
+    /**
+     * GET /api/pricing/entry-fee?localizationsID=99
+     *
+     * Checks whether an entry fee product should be offered to the authenticated user.
+     *
+     * Response:
+     *   { "entryFeeRequired": false }                   → user already paid
+     *   { "entryFeeRequired": true, "product": {...} }  → product to offer
+     *   { "entryFeeRequired": false, "product": null, "message": "..." } → not configured
+     */
+    public function checkEntryFee(Request $request): JsonResponse
+    {
+        $request->validate([
+            'localizationsID' => ['required', 'integer'],
+        ]);
+
+        $localizationsID = (int) $request->input('localizationsID');
+
+        /** @var \App\Models\CrmUser $crmUser */
+        $crmUser = $request->user();
+
+        if (!$crmUser) {
+            return response()->json(['message' => 'CRM user not found.'], 404);
+        }
+
+        $result = $this->pricingService->checkForEntryFee(
+            (int) $crmUser->UsersID,
+            $localizationsID
+        );
+
+        if ($result === false) {
+            return response()->json(['entryFeeRequired' => false]);
+        }
+
+        if ($result === null) {
+            return response()->json([
+                'entryFeeRequired' => false,
+                'product'          => null,
+                'message'          => 'Brak skonfigurowanej opłaty wpisowej w systemie.',
+            ]);
+        }
+
+        return response()->json([
+            'entryFeeRequired' => true,
+            'product'          => $result,
+        ]);
+    }
 }

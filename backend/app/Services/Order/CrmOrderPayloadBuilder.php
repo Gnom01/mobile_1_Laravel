@@ -15,16 +15,20 @@ namespace App\Services\Order;
 final class CrmOrderPayloadBuilder
 {
     /**
-     * @param  array  $payload             Validated Flutter request data (stored in payload_json)
-     * @param  string $guid               Order GUID (from CreateOrderData, not from payload)
-     * @param  int    $authCrmUserId      Authenticated user's CRM UsersID (from users.UsersID)
-     * @return array                      CRM body ready to wrap in {"type":"Order","body":{...}}
+     * @param  array    $payload              Validated Flutter request data (stored in payload_json)
+     * @param  string   $guid                Order GUID (from CreateOrderData, not from payload)
+     * @param  int      $authCrmUserId       Authenticated user's CRM UsersID (payer / logged-in parent)
+     * @param  int      $defaultLocalizationsId
+     * @param  int|null $participantUsersId  CRM UsersID of the course participant (resolved from GUID)
+     * @return array                         CRM body ready to wrap in {"type":"Order","body":{...}}
      */
-    public static function build(array $payload, string $guid, int $authCrmUserId, int $defaultLocalizationsId = 0): array
+    public static function build(array $payload, string $guid, int $authCrmUserId, int $defaultLocalizationsId = 0, ?int $participantUsersId = null): array
     {
         $allInstallments = self::buildInstallments($payload);
 
-        $usersID      = (int) ($payload['usersID'] ?? $authCrmUserId);
+        // Participant: use the explicitly resolved ID; fall back to authenticated user only when
+        // no participant was specified (e.g. the user orders for themselves).
+        $usersID      = $participantUsersId ?? $authCrmUserId;
         $payerUsersID = (int) ($payload['payer_UsersID'] ?? $payload['payerUserId'] ?? $authCrmUserId);
 
         $productsID      = (int) ($payload['productsID']      ?? $payload['rawSelectedPricing']['productsID']      ?? 0);
