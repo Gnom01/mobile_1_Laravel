@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\CheckoutController;
+use App\Http\Controllers\Api\ContractController;
 use App\Http\Controllers\Api\CourseController;
 use App\Http\Controllers\Api\CrmUserController;
 use App\Http\Controllers\Api\PaymentController;
@@ -28,6 +29,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Payments
     Route::get('/payments/schedule', [PaymentController::class, 'getSchedule']);
     Route::get('/payments/history/{parentGuid}', [PaymentController::class, 'getPaymentHistory']);
+
+    // Contracts
+    Route::get('/contracts/{parentGuid}', [ContractController::class, 'getContracts']);
     Route::post('/checkout/schedule/start', [CheckoutController::class, 'startScheduleCheckout']);
     Route::post('/checkout/{checkoutSession}/refresh', [CheckoutController::class, 'refreshStatus']);
 
