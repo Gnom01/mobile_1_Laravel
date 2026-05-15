@@ -27,6 +27,8 @@ use App\Jobs\PullXSchedulesJob;
 use App\Jobs\PullDaysJob;
 use App\Jobs\PullDaysOffJob;
 use App\Jobs\PullProductsPaymentInstallmentsJob;
+use App\Jobs\PullCoursesHeadingsJob;
+use App\Jobs\PullSchedulesEventsSettlementsJob;
 use Throwable;
 
 class CrmSync extends Command
@@ -78,6 +80,8 @@ class CrmSync extends Command
             'PullDaysJob'                                   => PullDaysJob::class,
             'PullDaysOffJob'                                => PullDaysOffJob::class,
             'PullProductsPaymentInstallmentsJob'            => PullProductsPaymentInstallmentsJob::class,
+            'PullCoursesHeadingsJob'                        => PullCoursesHeadingsJob::class,
+            'PullSchedulesEventsSettlementsJob'             => PullSchedulesEventsSettlementsJob::class,
         ];
 
         foreach ($jobs as $name => $jobClass) {
