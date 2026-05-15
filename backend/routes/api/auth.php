@@ -12,6 +12,8 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/sms/send', [OtpController::class, 'requestOtp']);
 Route::post('/sms/verify', [OtpController::class, 'verifyOtp']);
+Route::post('/sms/login/send', [OtpController::class, 'requestOtp']);
+Route::post('/sms/login/verify', [OtpController::class, 'verifyOtp']);
 Route::post('/password/reset', [PasswordResetController::class, 'requestReset']);
 Route::post('/password/reset/verify', [PasswordResetController::class, 'verifyResetCode']);
 Route::post('/password/reset/confirm', [PasswordResetController::class, 'confirmReset']);
