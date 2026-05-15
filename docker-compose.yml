@@ -24,6 +24,27 @@ services:
       - app-network
 
   # ───────────────────────────────────────────────
+  # Migracje Laravel
+  # Uruchamia php artisan migrate przy deployu
+  # ───────────────────────────────────────────────
+  migrate:
+    build:
+      context: ./docker/php
+    container_name: mobile_1_laravel-migrate-1
+    restart: "no"
+    working_dir: /var/www/html
+    command: php artisan migrate --force --no-interaction
+    volumes:
+      - ./backend:/var/www/html
+    env_file:
+      - ./.env.docker
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # ───────────────────────────────────────────────
   # PHP + FPM (główna aplikacja)
   # ───────────────────────────────────────────────
   php:
@@ -39,6 +60,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - app-network
 
@@ -74,8 +97,10 @@ services:
     env_file:
       - ./.env.docker
     depends_on:
-      - mysql
-      - php
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     tty: true
     stdin_open: true
     networks:
@@ -96,8 +121,10 @@ services:
     env_file:
       - ./.env.docker
     depends_on:
-      - mysql
-      - php
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     tty: true
     stdin_open: true
     networks:
