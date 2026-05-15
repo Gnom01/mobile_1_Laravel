@@ -166,11 +166,11 @@ class PaymentController extends Controller
         foreach ($allPayment as $index => $payment) {
             $childSql = "
                 WITH family AS (
-                    SELECT :usersID AS UsersID
+                    SELECT :usersID1 AS UsersID
                     UNION
                     SELECT ur.UsersID
                     FROM usersrelations ur
-                    WHERE ur.Parent_UsersID = :usersID
+                    WHERE ur.Parent_UsersID = :usersID2
                     AND ur.Cancelled = 0
                 )
                 SELECT
@@ -212,7 +212,8 @@ class PaymentController extends Controller
             ";
 
             $allPayment[$index]->allPayments = DB::select($childSql, [
-                'usersID'    => $usersID,
+                'usersID1'   => $usersID,
+                'usersID2'   => $usersID,
                 'paymentsID' => $payment->paymentsID,
             ]);
         }
