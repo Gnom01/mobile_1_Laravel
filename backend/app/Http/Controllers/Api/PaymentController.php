@@ -140,11 +140,11 @@ class PaymentController extends Controller
                 AND p.paymentStatusesDVID IN (1,2,3,4)
                 AND p.paymentMethodsDVID <> 4
                 AND (
-                    p.usersID = :usersID
-                    OR p.payer_UsersID = :usersID
+                    p.usersID = :usersID1
+                    OR p.payer_UsersID = :usersID2
                     OR EXISTS (
                         SELECT 1 FROM usersrelations ur
-                        WHERE ur.Parent_UsersID = :usersID
+                        WHERE ur.Parent_UsersID = :usersID3
                             AND ur.UsersID = p.payer_UsersID  
                             AND ur.Cancelled = 0
                             AND ur.ParticipantRelationsDVID IN (1,2)
@@ -154,7 +154,11 @@ class PaymentController extends Controller
             ORDER BY p.paymentsID DESC
         ";
 
-        $allPayment = DB::select($parentSql, ['usersID' => $usersID]);
+        $allPayment = DB::select($parentSql, [
+            'usersID1' => $usersID,
+            'usersID2' => $usersID,
+            'usersID3' => $usersID,
+        ]);
 
         // Deduplicate – LEFT JOIN paymentsitems/userspaymentsschedules may produce
         // multiple rows per payment; keep first occurrence (which carries positionName).
@@ -165,14 +169,6 @@ class PaymentController extends Controller
         // 3. For each payment, fetch child items
         foreach ($allPayment as $index => $payment) {
             $childSql = "
-                WITH family AS (
-                    SELECT :usersID1 AS UsersID
-                    UNION
-                    SELECT ur.UsersID
-                    FROM usersrelations ur
-                    WHERE ur.Parent_UsersID = :usersID2
-                    AND ur.Cancelled = 0
-                )
                 SELECT
                     pis.vatRatesIK,
                     pr.productsLevel2DVID,
@@ -198,17 +194,48 @@ class PaymentController extends Controller
                     d3.Name AS paymentStatusesName,
                     pis.contractsID
                 FROM paymentsitems pis
-                JOIN family f ON f.UsersID = pis.usersID
-                LEFT JOIN payments p ON p.paymentsID = pis.paymentsID AND p.cancelled = 0
-                LEFT JOIN dictionaries d ON d.valueID = p.paymentMethodsDVID AND d.DictionaryName = 'PaymentMethods' AND d.Cancelled = 0
-                LEFT JOIN users u ON p.usersID = u.UsersID AND u.Cancelled = 0
-                LEFT JOIN localizations l ON l.LocalizationsID = pis.localizationsID AND l.Cancelled = 0
-                LEFT JOIN products pr ON pr.ProductsID = pis.productsID AND pr.Cancelled = 0
-                LEFT JOIN dictionaries d1 ON d1.DictionaryName = 'paymentTypes' AND pr.paymentTypesDVID = d1.ValueID AND d1.Cancelled = 0
-                LEFT JOIN dictionaries d2 ON d2.DictionaryName = 'ProductsLevel2' AND pr.ProductsLevel2DVID = d2.ValueID AND d2.Cancelled = 0
-                LEFT JOIN userspaymentsschedules ups ON ups.usersPaymentsSchedulesID = pis.usersPaymentsSchedulesID AND ups.cancelled = 0
-                LEFT JOIN dictionaries d3 ON d3.DictionaryName = 'PaymentStatuses' AND p.paymentStatusesDVID = d3.ValueID AND d3.Cancelled = 0
+                LEFT JOIN payments p
+                    ON p.paymentsID = pis.paymentsID
+                    AND p.cancelled = 0
+                LEFT JOIN dictionaries d
+                    ON d.valueID = p.paymentMethodsDVID
+                    AND d.DictionaryName = 'PaymentMethods'
+                    AND d.Cancelled = 0
+                LEFT JOIN users u
+                    ON p.usersID = u.UsersID
+                    AND u.Cancelled = 0
+                LEFT JOIN localizations l
+                    ON l.LocalizationsID = pis.localizationsID
+                    AND l.Cancelled = 0
+                LEFT JOIN products pr
+                    ON pr.ProductsID = pis.productsID
+                    AND pr.Cancelled = 0
+                LEFT JOIN dictionaries d1
+                    ON d1.DictionaryName = 'paymentTypes'
+                    AND pr.paymentTypesDVID = d1.ValueID
+                    AND d1.Cancelled = 0
+                LEFT JOIN dictionaries d2
+                    ON d2.DictionaryName = 'ProductsLevel2'
+                    AND pr.ProductsLevel2DVID = d2.ValueID
+                    AND d2.Cancelled = 0
+                LEFT JOIN userspaymentsschedules ups
+                    ON ups.usersPaymentsSchedulesID = pis.usersPaymentsSchedulesID
+                    AND ups.cancelled = 0
+                LEFT JOIN dictionaries d3
+                    ON d3.DictionaryName = 'PaymentStatuses'
+                    AND p.paymentStatusesDVID = d3.ValueID
+                    AND d3.Cancelled = 0
                 WHERE p.paymentsID = :paymentsID
+                    AND (
+                        pis.usersID = :usersID1
+                        OR EXISTS (
+                            SELECT 1
+                            FROM usersrelations ur
+                            WHERE ur.Parent_UsersID = :usersID2
+                                AND ur.UsersID = pis.usersID
+                                AND ur.Cancelled = 0
+                        )
+                    )
             ";
 
             $allPayment[$index]->allPayments = DB::select($childSql, [
