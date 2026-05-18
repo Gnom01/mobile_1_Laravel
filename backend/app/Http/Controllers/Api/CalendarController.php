@@ -53,6 +53,10 @@ class CalendarController extends Controller
             $validated['personGuid'] ?? null
         );
 
+        if ($scopeUserIds === null) {
+            return response()->json(['success' => false, 'error' => 'FORBIDDEN'], 403);
+        }
+
         if (empty($scopeUserIds)) {
             return response()->json([
                 'success' => true,
@@ -118,6 +122,10 @@ class CalendarController extends Controller
             $relatedUsers,
             $validated['personGuid'] ?? null
         );
+
+        if ($scopeUserIds === null) {
+            return response()->json(['success' => false, 'error' => 'FORBIDDEN'], 403);
+        }
 
         if (empty($scopeUserIds)) {
             return response()->json([
@@ -250,7 +258,7 @@ class CalendarController extends Controller
         CrmUser $parentUser,
         Collection $relatedUsers,
         ?string $personGuid
-    ): array {
+    ): ?array {
         if (!empty($personGuid)) {
             if ($personGuid === (string) $parentUser->guid) {
                 return [(int) $authUser->UsersID];
@@ -259,7 +267,7 @@ class CalendarController extends Controller
             $selected = $relatedUsers->firstWhere('guid', $personGuid);
 
             if (!$selected) {
-                abort(403, 'FORBIDDEN');
+                return null;
             }
 
             return [(int) $selected->UsersID];
