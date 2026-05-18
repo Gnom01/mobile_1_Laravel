@@ -32,6 +32,7 @@ return new class extends Migration
             $table->unsignedInteger('whoinserted_usersid')->default(0);
             $table->dateTime('whenupdated')->nullable();
             $table->unsignedInteger('whoupdated_usersid')->default(0);
+            $table->unsignedInteger('localizationsid')->default(0);
 
             $table->unique(['eventdate', 'cancelled', 'usersschedulesid'], 'UK_UsersSchedules');
             $table->unique(
