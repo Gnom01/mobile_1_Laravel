@@ -325,11 +325,23 @@ class CrmSyncService
             if (is_string($value) && (
                 $value === '0000-00-00' ||
                 $value === '0000-00-00 00:00:00' ||
-                str_starts_with($value, '0000-')
+                str_starts_with($value, '0000-') ||
+                ($value === '' && $this->isDateColumn($key))
             )) {
                 $fields[$key] = null;
             }
         }
         return $fields;
+    }
+
+    /**
+     * Heuristic check: does the column name suggest a date/datetime field?
+     */
+    private function isDateColumn(string $key): bool
+    {
+        $lower = strtolower($key);
+        return str_contains($lower, 'date') ||
+               str_starts_with($lower, 'when') ||
+               str_ends_with($lower, '_at');
     }
 }

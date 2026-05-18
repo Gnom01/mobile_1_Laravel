@@ -19,7 +19,7 @@ class PullCoursesHeadingsJob implements ShouldQueue
             'resource'        => 'coursesheadings',
             'endpoint'        => '/CrmToMobileSync/getCoursesHeadingsMobile',
             'model'           => CoursesHeading::class,
-            'primaryKey'      => 'CoursesHeadingsID',
+            'primaryKey'      => 'coursesheadingsid',
             'pageSize'        => 1000,
             'responseKey'     => 'body',
             'whenUpdatedKey'  => 'whenupdated',
