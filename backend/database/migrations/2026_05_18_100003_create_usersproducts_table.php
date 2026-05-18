@@ -15,7 +15,7 @@ return new class extends Migration
             $table->unsignedSmallInteger('productslevel1dvid')->default(0);
             $table->unsignedSmallInteger('productslevel2dvid')->default(0);
             $table->unsignedSmallInteger('productslevel3dvid')->default(0);
-            $table->integer('priceliststemplatesposititionsid')->default(0);
+            $table->integer('priceliststemplatespositionsid')->default(0);
             $table->date('validfromdate')->nullable();
             $table->date('validtodate')->nullable();
             $table->integer('contractsid')->default(0);

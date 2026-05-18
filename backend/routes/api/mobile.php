@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\ContractController;
 use App\Http\Controllers\Api\CourseController;
 use App\Http\Controllers\Api\CrmUserController;
 use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\Api\ScheduleChangesController;
 use App\Http\Controllers\Api\UsersRelationsController;
 use App\Http\Controllers\Api\DictionaryController;
 use App\Http\Controllers\Api\PdfController;
@@ -44,6 +45,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/calendar/people/{parentGuid}', [CalendarController::class, 'getPeople']);
     Route::get('/calendar/month/{parentGuid}', [CalendarController::class, 'getMonthSummary']);
     Route::get('/calendar/day/{parentGuid}', [CalendarController::class, 'getDayEvents']);
+
+    // Schedule changes
+    Route::get('/schedule-changes/missed/{parentGuid}', [ScheduleChangesController::class, 'getMissedLessons']);
+    Route::get('/schedule-changes/workoffs/{parentGuid}', [ScheduleChangesController::class, 'getWorkoffLessons']);
 
     // Dictionaries & courses
     Route::get('/dictionaries', [DictionaryController::class, 'index']);
