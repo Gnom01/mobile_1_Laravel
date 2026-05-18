@@ -138,16 +138,10 @@ class OrderSyncService
 
     private function upsertUsersProduct(int $id, array $data, string $guid): void
     {
-        // usersproducts table mirrors CRM — use updateOrCreate by CRM primary key.
-        // The model/table may not exist yet in the project; guard safely.
-        if (!class_exists(\App\Models\UsersProduct::class)) {
-            return;
-        }
-
         $attributes = array_merge($data, ['crm_order_guid' => $guid]);
         unset($attributes['usersProductsID'], $attributes['usersProductsId']);
 
-        \App\Models\UsersProduct::updateOrCreate(['usersProductsID' => $id], $attributes);
+        \App\Models\UsersProduct::updateOrCreate(['usersproductsid' => $id], $attributes);
     }
 
     private function upsertPaymentsSchedule(int $id, array $data, string $guid): void

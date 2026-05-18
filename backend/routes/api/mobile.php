@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\CalendarController;
 use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\CheckoutController;
 use App\Http\Controllers\Api\ContractController;
@@ -38,6 +39,11 @@ Route::middleware('auth:sanctum')->group(function () {
     // Relations
     Route::get('/users-relations/{parentGuid}', [UsersRelationsController::class, 'getRelatedUsers']);
     Route::post('/users-relations', [UsersRelationsController::class, 'store']);
+
+    // Calendar
+    Route::get('/calendar/people/{parentGuid}', [CalendarController::class, 'getPeople']);
+    Route::get('/calendar/month/{parentGuid}', [CalendarController::class, 'getMonthSummary']);
+    Route::get('/calendar/day/{parentGuid}', [CalendarController::class, 'getDayEvents']);
 
     // Dictionaries & courses
     Route::get('/dictionaries', [DictionaryController::class, 'index']);
