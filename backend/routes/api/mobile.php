@@ -14,6 +14,11 @@ use App\Http\Controllers\Api\DictionaryController;
 use App\Http\Controllers\Api\PdfController;
 use App\Http\Controllers\Api\PricingController;
 use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\WorkshopController;
+use App\Http\Controllers\Api\CampController;
+use App\Http\Controllers\Api\DayCampController;
+use App\Http\Controllers\Api\TicketController;
+use App\Http\Controllers\Api\MobilePushController;
 
 // ───────────────────────────────────────────────
 // Mobile data query routes (require authentication)
@@ -69,4 +74,35 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Orders (CRM-first)
     Route::post('/orders', [OrderController::class, 'store']);
+
+    // Push notifications
+    Route::post('/mobile/device-tokens', [MobilePushController::class, 'registerDeviceToken']);
+    Route::delete('/mobile/device-tokens/{token}', [MobilePushController::class, 'deleteDeviceToken']);
+    Route::get('/mobile/notifications', [MobilePushController::class, 'index']);
+    Route::get('/mobile/notifications/unread-count', [MobilePushController::class, 'unreadCount']);
+    Route::get('/mobile/notifications/{id}', [MobilePushController::class, 'show']);
+    Route::post('/mobile/notifications/{id}/read', [MobilePushController::class, 'markRead']);
+    Route::post('/mobile/notifications/{id}/opened', [MobilePushController::class, 'markOpened']);
+    Route::post('/mobile/notifications/read-all', [MobilePushController::class, 'readAll']);
+
+    // ─── Offer sections ─────────────────────────────
+    // Workshops YGM
+    Route::get('/offers/workshops/ygm',          [WorkshopController::class, 'indexYgm']);
+    Route::get('/offers/workshops/ygm/{id}',     [WorkshopController::class, 'showYgm']);
+    // Workshops European
+    Route::get('/offers/workshops/european',     [WorkshopController::class, 'indexEuropean']);
+    Route::get('/offers/workshops/european/{id}',[WorkshopController::class, 'showEuropean']);
+    // Camps
+    Route::get('/offers/camps',                  [CampController::class, 'index']);
+    Route::get('/offers/camps/{id}',             [CampController::class, 'show']);
+    // Day camps (półkolonie)
+    Route::get('/offers/day-camps',              [DayCampController::class, 'index']);
+    Route::get('/offers/day-camps/{id}',         [DayCampController::class, 'show']);
+    // Tickets
+    Route::get('/offers/tickets',                [TicketController::class, 'index']);
+    Route::get('/offers/tickets/{id}',           [TicketController::class, 'show']);
+    // Pricing
+    Route::get('/pricing/camp/{id}',             [CampController::class, 'pricing']);
+    Route::get('/pricing/day-camp/{id}',         [DayCampController::class, 'pricing']);
+    Route::get('/pricing/ticket/{id}',           [TicketController::class, 'pricing']);
 });

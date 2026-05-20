@@ -35,6 +35,7 @@ class CalendarController extends Controller
 
     public function getMonthSummary(Request $request, string $parentGuid): JsonResponse
     {
+
         [$authUser, $parentUser, $relatedUsers] = $this->resolveParentContext($request, $parentGuid);
 
         if (!$authUser || !$parentUser) {

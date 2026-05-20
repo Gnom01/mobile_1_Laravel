@@ -19,7 +19,7 @@ class PullSchedulesEventsSettlementsJob implements ShouldQueue
             'resource'        => 'scheduleseventssettlements',
             'endpoint'        => '/CrmToMobileSync/getSchedulesEventsSettlementsMobile',
             'model'           => SchedulesEventSettlement::class,
-            'primaryKey'      => 'schedulesEventsSettlementsID',
+            'primaryKey'      => 'scheduleseventssettlementsid',
             'pageSize'        => 1000,
             'responseKey'     => 'body',
             'whenUpdatedKey'  => 'whenupdated',
@@ -28,8 +28,13 @@ class PullSchedulesEventsSettlementsJob implements ShouldQueue
                 'current_LocalizationsID' => '0',
             ],
             'fieldMap' => function (array $r): array {
-                // Exclude generated/computed columns — MySQL rejects explicit values for them
-                unset($r['startDateTime'], $r['endDateTime'], $r['durationInMinutes']);
+                // Exclude generated/computed columns — MySQL rejects explicit values for them.
+                // The CRM returns lowercase keys, so unset both cases to be safe.
+                unset(
+                    $r['startDateTime'],    $r['startdatetime'],
+                    $r['endDateTime'],      $r['enddatetime'],
+                    $r['durationInMinutes'],$r['durationinminutes']
+                );
                 return $r;
             },
         ]);

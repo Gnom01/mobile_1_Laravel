@@ -33,6 +33,11 @@ use App\Jobs\PullUsersSchedulesJob;
 use App\Jobs\PullUsersTicketsJob;
 use App\Jobs\PullUserWorkshopsGroupsJob;
 use App\Jobs\PullUsersProductsJob;
+use App\Jobs\PullWorkshopsYgmJob;
+use App\Jobs\PullWorkshopsEuropeanJob;
+use App\Jobs\PullCampsJob;
+use App\Jobs\PullDayCampsJob;
+use App\Jobs\PullTicketsJob;
 use Throwable;
 
 class CrmSync extends Command
@@ -90,6 +95,12 @@ class CrmSync extends Command
             'PullUsersTicketsJob'                           => PullUsersTicketsJob::class,
             'PullUserWorkshopsGroupsJob'                    => PullUserWorkshopsGroupsJob::class,
             'PullUsersProductsJob'                          => PullUsersProductsJob::class,
+            // Offer sections: workshops, camps, day camps, tickets
+            'PullWorkshopsYgmJob'                            => PullWorkshopsYgmJob::class,
+            'PullWorkshopsEuropeanJob'                       => PullWorkshopsEuropeanJob::class,
+            'PullCampsJob'                                   => PullCampsJob::class,
+            'PullDayCampsJob'                                => PullDayCampsJob::class,
+            'PullTicketsJob'                                 => PullTicketsJob::class,
         ];
 
         foreach ($jobs as $name => $jobClass) {

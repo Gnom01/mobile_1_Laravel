@@ -37,6 +37,7 @@ return [
 
     'crm' => [
         'base_url' => env('CRM_BASE_URL'),
+        'push_api_token' => env('CRM_PUSH_API_TOKEN'),
         'login_endpoint' => env('CRM_LOGIN_ENDPOINT', '/auth/login'),
         'refresh_endpoint' => env('CRM_REFRESH_ENDPOINT', '/auth/refresh'),
         'username' => env('CRM_USERNAME'),
@@ -65,6 +66,12 @@ return [
             FILTER_VALIDATE_BOOL,
             FILTER_NULL_ON_FAILURE
         ) ?? (env('APP_ENV', 'production') !== 'production'),
+    ],
+
+    'firebase' => [
+        'project_id' => env('FIREBASE_PROJECT_ID'),
+        'server_key' => env('FIREBASE_SERVER_KEY'),
+        'credentials' => env('FIREBASE_CREDENTIALS'),
     ],
 
 ];
