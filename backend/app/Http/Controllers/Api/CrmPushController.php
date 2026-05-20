@@ -153,7 +153,17 @@ class CrmPushController extends Controller
             $tokenQuery->where('user_id', $data['user_id']);
         }
 
-        $deviceToken = $tokenQuery->latest('last_seen_at')->firstOrFail();
+        $deviceToken = $tokenQuery->latest('last_seen_at')->first();
+
+        if (!$deviceToken) {
+            $notification->delete();
+            return response()->json([
+                'success' => false,
+                'message' => empty($data['device_token_id'])
+                    ? "No active device token found for user_id={$data['user_id']}."
+                    : "Device token #{$data['device_token_id']} not found or is inactive.",
+            ], 404);
+        }
         PushNotificationRecipient::create([
             'push_notification_id' => $notification->id,
             'user_id' => $deviceToken->user_id,
