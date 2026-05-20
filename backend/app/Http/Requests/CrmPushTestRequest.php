@@ -14,8 +14,8 @@ class CrmPushTestRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_id' => ['required_without:device_token_id', 'integer'],
-            'device_token_id' => ['required_without:user_id', 'integer'],
+            'user_id'         => ['required_without:device_token_id', 'nullable', 'integer'],
+            'device_token_id' => ['required_without:user_id', 'nullable', 'integer'],
             'title' => ['required', 'string', 'max:255'],
             'body' => ['required', 'string'],
             'category' => ['nullable', 'in:marketing,group,instructor,organization,payment,reminder,schedule_change,cancelled_class,system'],
