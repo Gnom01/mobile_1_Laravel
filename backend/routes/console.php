@@ -30,4 +30,4 @@ Schedule::call(function () {
         ->where('scheduled_at', '<=', now())
         ->pluck('id')
         ->each(fn ($id) => SendPushNotificationJob::dispatch((int) $id));
-})->everyMinute()->withoutOverlapping();
+})->everyMinute()->name('push-notifications-dispatch')->withoutOverlapping();
