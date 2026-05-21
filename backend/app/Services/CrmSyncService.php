@@ -142,6 +142,12 @@ class CrmSyncService
                 $id = (int)($r[$apiPrimaryKey] ?? 0);
                 if (!$id) continue;
 
+                if (isset($config['skipIf']) && ($config['skipIf'])($r)) {
+                    Log::debug("{$logPrefix} Skipping record ID {$id} (skipIf matched)");
+                    if ($id > $lastId) $lastId = $id;
+                    continue;
+                }
+
                 $fields = $this->sanitizeRecord($fieldMap($r));
                 $model  = $modelClass::updateOrCreate(
                     [$primaryKey => $id],
@@ -242,6 +248,11 @@ class CrmSyncService
                 $apiPrimaryKey = $config['apiPrimaryKey'] ?? $primaryKey;
                 $id = (int)($r[$apiPrimaryKey] ?? 0);
                 if (!$id) continue;
+
+                if (isset($config['skipIf']) && ($config['skipIf'])($r)) {
+                    Log::debug("{$logPrefix} Skipping record ID {$id} (skipIf matched)");
+                    continue;
+                }
 
                 $fields = $this->sanitizeRecord($fieldMap($r));
                 $model = $modelClass::updateOrCreate(

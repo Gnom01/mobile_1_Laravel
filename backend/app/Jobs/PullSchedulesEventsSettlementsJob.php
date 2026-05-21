@@ -35,7 +35,31 @@ class PullSchedulesEventsSettlementsJob implements ShouldQueue
                     $r['endDateTime'],      $r['enddatetime'],
                     $r['durationInMinutes'],$r['durationinminutes']
                 );
+
+                // Derive eventdate from integer fields if CRM returned an invalid/empty date.
+                if (empty($r['eventdate']) || $r['eventdate'] === '0000-00-00') {
+                    $intDate = (int) ($r['inteventdate'] ?? 0);
+                    if ($intDate === 0) {
+                        $intDate = (int) ($r['masterinteventdate'] ?? 0);
+                    }
+                    if ($intDate > 0) {
+                        $s = (string) $intDate;
+                        $r['eventdate'] = substr($s, 0, 4) . '-' . substr($s, 4, 2) . '-' . substr($s, 6, 2);
+                    }
+                }
+
                 return $r;
+            },
+            'skipIf' => function (array $r): bool {
+                // Skip records where we cannot determine a valid eventdate.
+                $eventdate    = $r['eventdate'] ?? '';
+                $inteventdate = (int) ($r['inteventdate']       ?? 0);
+                $masterInt    = (int) ($r['masterinteventdate'] ?? 0);
+
+                $hasDate = !empty($eventdate) && $eventdate !== '0000-00-00';
+                $hasInt  = $inteventdate > 0 || $masterInt > 0;
+
+                return !$hasDate && !$hasInt;
             },
         ]);
     }
