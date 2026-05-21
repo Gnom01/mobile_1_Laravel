@@ -38,6 +38,7 @@ use App\Jobs\PullWorkshopsEuropeanJob;
 use App\Jobs\PullCampsJob;
 use App\Jobs\PullDayCampsJob;
 use App\Jobs\PullTicketsJob;
+use App\Models\SyncState;
 use Throwable;
 
 class CrmSync extends Command
@@ -47,7 +48,9 @@ class CrmSync extends Command
      *
      * @var string
      */
-    protected $signature = 'crm:sync';
+    protected $signature = 'crm:sync
+        {resource? : Optional job/resource name, for example coursesheadings or PullCoursesHeadingsJob}
+        {--full : Reset selected sync state and run full sync}';
 
     /**
      * The console command description.
@@ -103,6 +106,46 @@ class CrmSync extends Command
             'PullTicketsJob'                                 => PullTicketsJob::class,
         ];
 
+        $requestedResource = strtolower((string) $this->argument('resource'));
+
+        if ($requestedResource !== '') {
+            $aliases = [
+                'coursesheadings' => 'PullCoursesHeadingsJob',
+            ];
+
+            $requestedJob = $aliases[$requestedResource] ?? $this->argument('resource');
+            $requestedJob = strtolower((string) $requestedJob);
+
+            $jobs = array_filter(
+                $jobs,
+                fn ($class, $name) => strtolower($name) === $requestedJob,
+                ARRAY_FILTER_USE_BOTH
+            );
+
+            if (empty($jobs)) {
+                $this->error("Unknown CRM sync resource: {$this->argument('resource')}");
+                return self::FAILURE;
+            }
+        }
+
+        if ($this->option('full')) {
+            foreach (array_keys($jobs) as $name) {
+                $resource = $this->resourceNameForJob($name);
+                SyncState::query()->updateOrCreate(
+                    ['resource' => $resource],
+                    [
+                        'last_sync_at' => null,
+                        'cursor' => null,
+                        'last_synced_id' => 0,
+                        'is_full_synced' => false,
+                        'full_sync_started_at' => null,
+                        'full_sync_completed_at' => null,
+                    ]
+                );
+                Log::warning("[CRM:SYNC] Forced full sync state reset for resource: {$resource}");
+            }
+        }
+
         foreach ($jobs as $name => $jobClass) {
             Log::info("[CRM:SYNC] Starting job: {$name}");
             $this->info("Running {$name}...");
@@ -125,5 +168,30 @@ class CrmSync extends Command
         Log::info('[CRM:SYNC] ===== crm:sync command finished =====');
         $this->info('CRM sync finished.');
         return self::SUCCESS;
+    }
+
+    private function resourceNameForJob(string $jobName): string
+    {
+        $map = [
+            'PullPaymentsJob' => 'payments',
+            'PullPaymentsRealJob' => 'payments_real',
+            'PullCoursesHeadingsDimensionsJob' => 'coursesheadingsdimensions',
+            'PullCoursesHeadingsJob' => 'coursesheadings',
+            'PullPriceListsTemplatesPositionsJob' => 'priceliststemplatespositions',
+            'PullPriceListsTemplatesJob' => 'priceliststemplates',
+            'PullPriceListsTemplatesPositionsDimensionsJob' => 'priceliststemplatespositionsdimensions',
+            'PullProductsDimensionsJob' => 'productsdimensions',
+            'PullProductsPaymentInstallmentsJob' => 'productspaymentinstallments',
+            'PullSchedulesEventsSettlementsJob' => 'scheduleseventssettlements',
+            'PullUsersSchedulesJob' => 'usersschedules',
+            'PullUsersTicketsJob' => 'userstickets',
+            'PullUserWorkshopsGroupsJob' => 'userworkshopsgroups',
+            'PullUsersProductsJob' => 'usersproducts',
+            'PullWorkshopsYgmJob' => 'workshops_ygm',
+            'PullWorkshopsEuropeanJob' => 'workshops_european',
+            'PullDayCampsJob' => 'day_camps',
+        ];
+
+        return $map[$jobName] ?? strtolower(str_replace(['Pull', 'Job'], '', $jobName));
     }
 }

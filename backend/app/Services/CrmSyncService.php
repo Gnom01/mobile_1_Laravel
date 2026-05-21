@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\SyncState;
+use App\Models\SyncRunLog;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -50,20 +51,33 @@ class CrmSyncService
         Log::info("{$logPrefix} Starting sync");
 
         $lock = Cache::lock("sync:{$resource}", $lockTime);
+        $lockAcquired = false;
 
-        // if (!$lock->get()) {
-        //     Log::warning("{$logPrefix} Already running, skipping.");
-        //     return ['status' => 'skipped', 'reason' => 'locked'];
-        // }
+        if (!$lock->get()) {
+            Log::warning("{$logPrefix} Already running, skipping.");
+            return ['status' => 'skipped', 'reason' => 'locked'];
+        }
+
+        $lockAcquired = true;
 
         $startTime = microtime(true);
         $totalProcessed = 0;
+        $runLog = null;
 
         try {
             $state = SyncState::firstOrCreate(
                 ['resource' => $resource],
                 ['last_sync_at' => null, 'is_full_synced' => false, 'last_synced_id' => 0]
             );
+
+            $runLog = SyncRunLog::create([
+                'resource' => $resource,
+                'mode' => $state->is_full_synced ? 'incremental' : 'full',
+                'status' => 'running',
+                'started_at' => now(),
+                'last_synced_id_before' => (int)($state->last_synced_id ?? 0),
+                'last_sync_at_before' => $state->last_sync_at,
+            ]);
 
             if ($state->is_full_synced) {
                 // === INCREMENTAL MODE ===
@@ -73,13 +87,24 @@ class CrmSyncService
                 $result = $this->syncFull($state, $config, $startTime, $maxTime, $logPrefix);
             }
 
+            $this->finishRunLog($runLog, $state, $result);
+
             return $result;
 
         } catch (\Throwable $e) {
             Log::error("{$logPrefix} ERROR: " . $e->getMessage(), ['exception' => $e]);
+            if ($runLog) {
+                $runLog->update([
+                    'status' => 'error',
+                    'finished_at' => now(),
+                    'error_message' => $e->getMessage(),
+                ]);
+            }
             return ['status' => 'error', 'message' => $e->getMessage()];
         } finally {
-            $lock->forceRelease();
+            if ($lockAcquired) {
+                $lock->release();
+            }
             $elapsed = round(microtime(true) - $startTime, 2);
             Log::info("{$logPrefix} Finished in {$elapsed}s");
         }
@@ -111,7 +136,9 @@ class CrmSyncService
 
         // Resume from last saved ID (0 = start from beginning)
         $lastId = (int)($state->last_synced_id ?? 0);
+        $totalFetched = 0;
         $totalProcessed = 0;
+        $totalFailed = 0;
         $pageMaxDate = null;
 
         Log::info("{$logPrefix} Full sync mode (lastSyncedId), resuming from ID {$lastId}");
@@ -133,6 +160,7 @@ class CrmSyncService
             $body  = $resp->json();
             $items = $this->extractItems($body, $responseKey);
             $itemCount = count($items);
+            $totalFetched += $itemCount;
 
             Log::info("{$logPrefix} Fetched {$itemCount} items after ID {$lastId}");
 
@@ -140,35 +168,43 @@ class CrmSyncService
                 if (!is_array($r)) continue;
 
                 $apiPrimaryKey = $config['apiPrimaryKey'] ?? $primaryKey;
-                $id = (int)($r[$apiPrimaryKey] ?? 0);
+                $id = (int)$this->recordValue($r, [$apiPrimaryKey, $primaryKey], 0);
                 if (!$id) continue;
-
-                if (isset($config['skipIf']) && ($config['skipIf'])($r)) {
-                    Log::debug("{$logPrefix} Skipping record ID {$id} (skipIf matched)");
-                    if ($id > $lastId) $lastId = $id;
-                    continue;
-                }
-
-                $fields = $this->sanitizeRecord($fieldMap($r));
-                $model  = $modelClass::updateOrCreate(
-                    [$primaryKey => $id],
-                    $fields
-                );
-
-                if (isset($config['afterSave'])) {
-                    ($config['afterSave'])($r, $model);
-                }
 
                 if ($id > $lastId) {
                     $lastId = $id;
                 }
 
-                $whenUpdated = $this->validateDate($r[$whenUpdatedKey] ?? '', null);
+                if (isset($config['skipIf']) && ($config['skipIf'])($r)) {
+                    Log::debug("{$logPrefix} Skipping record ID {$id} (skipIf matched)");
+                    continue;
+                }
+
+                try {
+                    $fields = $this->sanitizeRecord($fieldMap($r));
+                    $model  = $modelClass::updateOrCreate(
+                        [$primaryKey => $id],
+                        $fields
+                    );
+
+                    if (isset($config['afterSave'])) {
+                        ($config['afterSave'])($r, $model);
+                    }
+
+                    $totalProcessed++;
+                } catch (\Throwable $e) {
+                    $totalFailed++;
+                    Log::error("{$logPrefix} Record {$id} failed, continuing sync: " . $e->getMessage(), [
+                        'record_id' => $id,
+                        'record' => $r,
+                        'exception' => $e,
+                    ]);
+                }
+
+                $whenUpdated = $this->validateDate($this->recordValue($r, $whenUpdatedKey, ''), null);
                 if ($whenUpdated && (!$pageMaxDate || $whenUpdated > $pageMaxDate)) {
                     $pageMaxDate = $whenUpdated;
                 }
-
-                $totalProcessed++;
             }
 
             // Save progress after each batch
@@ -181,7 +217,7 @@ class CrmSyncService
             // Check time limit
             if ((microtime(true) - $startTime) > $maxTime) {
                 Log::info("{$logPrefix} Time limit ({$maxTime}s) reached after {$totalProcessed} records, last ID {$lastId}. Will continue next run.");
-                return ['status' => 'partial', 'processed' => $totalProcessed, 'last_id' => $lastId];
+                return ['status' => 'partial', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $lastId];
             }
 
         } while ($itemCount >= $pageSize);
@@ -191,9 +227,9 @@ class CrmSyncService
         $state->full_sync_completed_at = now();
         $state->cursor = null;
         $state->save();
-        Log::info("{$logPrefix} Full sync completed! Total processed: {$totalProcessed}, last ID: {$lastId}");
+        Log::info("{$logPrefix} Full sync completed! Total processed: {$totalProcessed}, failed: {$totalFailed}, last ID: {$lastId}");
 
-        return ['status' => 'full_sync_complete', 'processed' => $totalProcessed, 'last_id' => $lastId];
+        return ['status' => 'full_sync_complete', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $lastId];
     }
 
     /**
@@ -213,13 +249,15 @@ class CrmSyncService
         $orderParam     = $config['orderParam'] ?? 'WhenUpdated ASC';
 
         $since = $state->last_sync_at
-            ? $state->last_sync_at->subSecond()->format('Y-m-d H:i:s')
+            ? $state->last_sync_at->copy()->subSecond()->format('Y-m-d H:i:s')
             : null;
 
         Log::info("{$logPrefix} Incremental mode, fetching updates since {$since}");
 
         $page = 1;
+        $totalFetched = 0;
         $totalProcessed = 0;
+        $totalFailed = 0;
         $pageMaxDate = null;
 
         $pageSizeParam = $config['pageSizeParam'] ?? 'pageSize';
@@ -242,12 +280,13 @@ class CrmSyncService
             $body = $resp->json();
             $items = $this->extractItems($body, $responseKey);
             $itemCount = count($items);
+            $totalFetched += $itemCount;
 
             foreach ($items as $r) {
                 if (!is_array($r)) continue;
 
                 $apiPrimaryKey = $config['apiPrimaryKey'] ?? $primaryKey;
-                $id = (int)($r[$apiPrimaryKey] ?? 0);
+                $id = (int)$this->recordValue($r, [$apiPrimaryKey, $primaryKey], 0);
                 if (!$id) continue;
 
                 if (isset($config['skipIf']) && ($config['skipIf'])($r)) {
@@ -255,22 +294,31 @@ class CrmSyncService
                     continue;
                 }
 
-                $fields = $this->sanitizeRecord($fieldMap($r));
-                $model = $modelClass::updateOrCreate(
-                    [$primaryKey => $id],
-                    $fields
-                );
+                try {
+                    $fields = $this->sanitizeRecord($fieldMap($r));
+                    $model = $modelClass::updateOrCreate(
+                        [$primaryKey => $id],
+                        $fields
+                    );
 
-                if (isset($config['afterSave'])) {
-                    ($config['afterSave'])($r, $model);
+                    if (isset($config['afterSave'])) {
+                        ($config['afterSave'])($r, $model);
+                    }
+
+                    $totalProcessed++;
+                } catch (\Throwable $e) {
+                    $totalFailed++;
+                    Log::error("{$logPrefix} Record {$id} failed, continuing sync: " . $e->getMessage(), [
+                        'record_id' => $id,
+                        'record' => $r,
+                        'exception' => $e,
+                    ]);
                 }
 
-                $whenUpdated = $this->validateDate($r[$whenUpdatedKey] ?? '', null);
+                $whenUpdated = $this->validateDate($this->recordValue($r, $whenUpdatedKey, ''), null);
                 if ($whenUpdated && (!$pageMaxDate || $whenUpdated > $pageMaxDate)) {
                     $pageMaxDate = $whenUpdated;
                 }
-
-                $totalProcessed++;
             }
 
             if ($pageMaxDate) {
@@ -283,13 +331,31 @@ class CrmSyncService
             // Check time limit
             if ((microtime(true) - $startTime) > $maxTime) {
                 Log::info("{$logPrefix} Time limit ({$maxTime}s) reached. Will continue next run.");
-                return ['status' => 'partial', 'processed' => $totalProcessed];
+                return ['status' => 'partial', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed];
             }
 
         } while ($itemCount >= $pageSize);
 
-        Log::info("{$logPrefix} Incremental sync done. Processed: {$totalProcessed}");
-        return ['status' => 'incremental_complete', 'processed' => $totalProcessed];
+        Log::info("{$logPrefix} Incremental sync done. Processed: {$totalProcessed}, failed: {$totalFailed}");
+        return ['status' => 'incremental_complete', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed];
+    }
+
+    private function finishRunLog(?SyncRunLog $runLog, SyncState $state, array $result): void
+    {
+        if (!$runLog) {
+            return;
+        }
+
+        $runLog->update([
+            'status' => (string)($result['status'] ?? 'finished'),
+            'finished_at' => now(),
+            'fetched_count' => (int)($result['fetched'] ?? 0),
+            'processed_count' => (int)($result['processed'] ?? 0),
+            'failed_count' => (int)($result['failed'] ?? 0),
+            'last_synced_id_after' => (int)($state->last_synced_id ?? 0),
+            'last_sync_at_after' => $state->last_sync_at,
+            'error_message' => (string)($result['message'] ?? ''),
+        ]);
     }
 
     /**
@@ -322,8 +388,36 @@ class CrmSyncService
     public function validateDate($date, $default = null)
     {
         if (empty($date)) return $default;
-        if (str_starts_with($date, '0000') || str_starts_with($date, '-')) return $default;
+        $value = trim((string)$date);
+        if ($value === '' || $value === '(null)' || strtolower($value) === 'null') return $default;
+        if (str_starts_with($value, '0000') || str_starts_with($value, '-')) return $default;
+        if (preg_match('/^0{1,2}[.\-\/]0{1,2}[.\-\/]0{4}/', $value)) return $default;
         return $date;
+    }
+
+    private function recordValue(array $record, $keys, $default = null)
+    {
+        foreach ((array)$keys as $key) {
+            if (array_key_exists($key, $record)) {
+                return $record[$key];
+            }
+        }
+
+        $lowerMap = [];
+        foreach ($record as $key => $value) {
+            if (is_string($key)) {
+                $lowerMap[strtolower($key)] = $value;
+            }
+        }
+
+        foreach ((array)$keys as $key) {
+            $lowerKey = strtolower((string)$key);
+            if (array_key_exists($lowerKey, $lowerMap)) {
+                return $lowerMap[$lowerKey];
+            }
+        }
+
+        return $default;
     }
 
     /**
@@ -338,6 +432,9 @@ class CrmSyncService
                 $value === '0000-00-00' ||
                 $value === '0000-00-00 00:00:00' ||
                 str_starts_with($value, '0000-') ||
+                preg_match('/^0{1,2}[.\-\/]0{1,2}[.\-\/]0{4}/', trim($value)) ||
+                strtolower(trim($value)) === 'null' ||
+                trim($value) === '(null)' ||
                 ($value === '' && $this->isDateColumn($key))
             )) {
                 $fields[$key] = null;
