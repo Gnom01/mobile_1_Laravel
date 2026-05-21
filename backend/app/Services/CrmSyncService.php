@@ -120,6 +120,7 @@ class CrmSyncService
             $params = array_merge([
                 'lastSyncedId'  => $lastId,
                 $pageSizeParam  => $pageSize,
+                'page'          => 1,
             ], $extraParams);
 
             $resp = $this->crm->post($endpoint, $params);
