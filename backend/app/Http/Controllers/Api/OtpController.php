@@ -21,6 +21,8 @@ class OtpController
      */
     public function requestOtp(Request $request, SerwerSmsClient $sms)
     {
+
+    // \App\Jobs\PullSchedulesEventsSettlementsJob::dispatchSync();
         $request->validate([
             'phone' => 'required|string|max:25',
         ]);
