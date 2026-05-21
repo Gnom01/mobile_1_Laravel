@@ -4,8 +4,10 @@ namespace App\Services;
 
 use App\Models\SyncState;
 use App\Models\SyncRunLog;
+use App\Models\SyncRecordFailure;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 
 class CrmSyncService
@@ -50,6 +52,12 @@ class CrmSyncService
 
         Log::info("{$logPrefix} Starting sync");
 
+        $schemaErrors = $this->validateConfig($config);
+        if (!empty($schemaErrors)) {
+            Log::error("{$logPrefix} Config validation failed", ['errors' => $schemaErrors]);
+            return ['status' => 'validation_failed', 'message' => implode('; ', $schemaErrors), 'failed' => count($schemaErrors)];
+        }
+
         $lock = Cache::lock("sync:{$resource}", $lockTime);
         $lockAcquired = false;
 
@@ -70,21 +78,23 @@ class CrmSyncService
                 ['last_sync_at' => null, 'is_full_synced' => false, 'last_synced_id' => 0]
             );
 
-            $runLog = SyncRunLog::create([
-                'resource' => $resource,
-                'mode' => $state->is_full_synced ? 'incremental' : 'full',
-                'status' => 'running',
-                'started_at' => now(),
-                'last_synced_id_before' => (int)($state->last_synced_id ?? 0),
-                'last_sync_at_before' => $state->last_sync_at,
-            ]);
+            if (Schema::hasTable('sync_run_logs')) {
+                $runLog = SyncRunLog::create([
+                    'resource' => $resource,
+                    'mode' => $state->is_full_synced ? 'incremental' : 'full',
+                    'status' => 'running',
+                    'started_at' => now(),
+                    'last_synced_id_before' => (int)($state->last_synced_id ?? 0),
+                    'last_sync_at_before' => $state->last_sync_at,
+                ]);
+            }
 
             if ($state->is_full_synced) {
                 // === INCREMENTAL MODE ===
-                $result = $this->syncIncremental($state, $config, $startTime, $maxTime, $logPrefix);
+                $result = $this->syncIncremental($state, $config, $startTime, $maxTime, $logPrefix, $runLog);
             } else {
                 // === FULL SYNC MODE ===
-                $result = $this->syncFull($state, $config, $startTime, $maxTime, $logPrefix);
+                $result = $this->syncFull($state, $config, $startTime, $maxTime, $logPrefix, $runLog);
             }
 
             $this->finishRunLog($runLog, $state, $result);
@@ -116,7 +126,7 @@ class CrmSyncService
      * Sends lastSyncedId to CRM so it returns only records with ID > lastSyncedId.
      * No page/offset — efficient even on large tables.
      */
-    private function syncFull(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix): array
+    private function syncFull(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix, ?SyncRunLog $runLog = null): array
     {
         $endpoint    = $config['endpoint'];
         $modelClass  = $config['model'];
@@ -181,7 +191,8 @@ class CrmSyncService
                 }
 
                 try {
-                    $fields = $this->sanitizeRecord($fieldMap($r));
+                    $fields = $this->sanitizeRecord($fieldMap($this->normalizeIncomingRecord($r, $config)));
+                    $this->assertRequiredFields($fields, $config);
                     $model  = $modelClass::updateOrCreate(
                         [$primaryKey => $id],
                         $fields
@@ -194,6 +205,7 @@ class CrmSyncService
                     $totalProcessed++;
                 } catch (\Throwable $e) {
                     $totalFailed++;
+                    $this->logRecordFailure($runLog, $config, $id, null, null, $e->getMessage(), $r);
                     Log::error("{$logPrefix} Record {$id} failed, continuing sync: " . $e->getMessage(), [
                         'record_id' => $id,
                         'record' => $r,
@@ -235,7 +247,7 @@ class CrmSyncService
     /**
      * Incremental sync: fetch records updated since last_sync_at.
      */
-    private function syncIncremental(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix): array
+    private function syncIncremental(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix, ?SyncRunLog $runLog = null): array
     {
         $endpoint   = $config['endpoint'];
         $modelClass = $config['model'];
@@ -246,10 +258,12 @@ class CrmSyncService
         $responseKey = $config['responseKey'] ?? 'body';
 
         $whenUpdatedKey = $config['whenUpdatedKey'] ?? 'whenUpdated';
+        $incrementalFields = $config['incrementalFields'] ?? [$whenUpdatedKey];
         $orderParam     = $config['orderParam'] ?? 'WhenUpdated ASC';
+        $bufferSeconds  = (int)($config['bufferSeconds'] ?? 1);
 
         $since = $state->last_sync_at
-            ? $state->last_sync_at->copy()->subSecond()->format('Y-m-d H:i:s')
+            ? $state->last_sync_at->copy()->subSeconds($bufferSeconds)->format('Y-m-d H:i:s')
             : null;
 
         Log::info("{$logPrefix} Incremental mode, fetching updates since {$since}");
@@ -265,6 +279,8 @@ class CrmSyncService
         do {
             $params = array_merge([
                 'updatedSince'  => $since,
+                'insertedSince'  => $since,
+                'incrementalFields' => $incrementalFields,
                 $pageSizeParam  => $pageSize,
                 'page'          => $page,
                 'order'         => $orderParam,
@@ -295,7 +311,8 @@ class CrmSyncService
                 }
 
                 try {
-                    $fields = $this->sanitizeRecord($fieldMap($r));
+                    $fields = $this->sanitizeRecord($fieldMap($this->normalizeIncomingRecord($r, $config)));
+                    $this->assertRequiredFields($fields, $config);
                     $model = $modelClass::updateOrCreate(
                         [$primaryKey => $id],
                         $fields
@@ -308,6 +325,7 @@ class CrmSyncService
                     $totalProcessed++;
                 } catch (\Throwable $e) {
                     $totalFailed++;
+                    $this->logRecordFailure($runLog, $config, $id, null, null, $e->getMessage(), $r);
                     Log::error("{$logPrefix} Record {$id} failed, continuing sync: " . $e->getMessage(), [
                         'record_id' => $id,
                         'record' => $r,
@@ -321,11 +339,6 @@ class CrmSyncService
                 }
             }
 
-            if ($pageMaxDate) {
-                $state->last_sync_at = Carbon::parse($pageMaxDate);
-                $state->save();
-            }
-
             $page++;
 
             // Check time limit
@@ -335,6 +348,11 @@ class CrmSyncService
             }
 
         } while ($itemCount >= $pageSize);
+
+        if ($pageMaxDate) {
+            $state->last_sync_at = Carbon::parse($pageMaxDate);
+            $state->save();
+        }
 
         Log::info("{$logPrefix} Incremental sync done. Processed: {$totalProcessed}, failed: {$totalFailed}");
         return ['status' => 'incremental_complete', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed];
@@ -356,6 +374,101 @@ class CrmSyncService
             'last_sync_at_after' => $state->last_sync_at,
             'error_message' => (string)($result['message'] ?? ''),
         ]);
+    }
+
+    public function dryRun(array $config, int $sampleSize = 10): array
+    {
+        $schemaErrors = $this->validateConfig($config);
+
+        $pageSizeParam = $config['pageSizeParam'] ?? 'pageSize';
+        $params = array_merge([
+            'lastSyncedId' => 0,
+            $pageSizeParam => $sampleSize,
+            'page' => 1,
+        ], $config['extraParams'] ?? []);
+
+        $resp = $this->crm->post($config['endpoint'], $params);
+        $items = $this->extractItems($resp->json(), $config['responseKey'] ?? 'body');
+
+        $records = [];
+        $warnings = [];
+        $fieldMap = $config['fieldMap'] ?? fn(array $r): array => $r;
+
+        foreach (array_slice($items, 0, $sampleSize) as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+
+            $normalized = $this->normalizeIncomingRecord($record, $config);
+            $mapped = $this->sanitizeRecord($fieldMap($normalized));
+            $id = $this->recordValue($record, [$config['apiPrimaryKey'] ?? $config['primaryKey'], $config['primaryKey']], null);
+
+            foreach (($config['requiredColumns'] ?? []) as $column) {
+                if (!array_key_exists($column, $mapped) && !array_key_exists(strtolower($column), $mapped)) {
+                    $warnings[] = "Record {$id}: missing required field {$column}";
+                    continue;
+                }
+
+                $value = $this->recordValue($mapped, [$column, strtolower($column)], null);
+                if ($value === null || $value === '') {
+                    $warnings[] = "Record {$id}: empty required field {$column}";
+                }
+            }
+
+            foreach (($config['dateColumns'] ?? []) as $column) {
+                $original = $this->recordValue($record, [$column, strtolower($column)], null);
+                if (is_string($original) && $original !== '' && $this->validateDate($original, null) === null) {
+                    $warnings[] = "Record {$id}: dirty date {$column}={$original}";
+                }
+            }
+
+            $records[] = [
+                'id' => $id,
+                'source' => array_slice($record, 0, 8, true),
+                'mapped' => array_slice($mapped, 0, 8, true),
+            ];
+        }
+
+        return [
+            'status' => empty($schemaErrors) ? 'ok' : 'validation_failed',
+            'schema_errors' => $schemaErrors,
+            'fetched_sample_count' => count($items),
+            'sample' => $records,
+            'warnings' => $warnings,
+        ];
+    }
+
+    public function validateConfig(array $config): array
+    {
+        $errors = [];
+        $modelClass = $config['model'] ?? null;
+        $targetTable = $config['targetTable'] ?? null;
+
+        if (!$modelClass || !class_exists($modelClass)) {
+            $errors[] = 'Target model does not exist.';
+        }
+
+        if (!$targetTable && $modelClass && class_exists($modelClass)) {
+            $targetTable = (new $modelClass())->getTable();
+        }
+
+        if (!$targetTable || !Schema::hasTable($targetTable)) {
+            $errors[] = "Target table does not exist: {$targetTable}";
+            return $errors;
+        }
+
+        $primaryKey = $config['primaryKey'] ?? null;
+        if (!$primaryKey || !$this->tableHasColumn($targetTable, $primaryKey)) {
+            $errors[] = "Primary key column missing in {$targetTable}: {$primaryKey}";
+        }
+
+        foreach (($config['requiredColumns'] ?? []) as $column) {
+            if (!$this->tableHasColumn($targetTable, $column)) {
+                $errors[] = "Required column missing in {$targetTable}: {$column}";
+            }
+        }
+
+        return $errors;
     }
 
     /**
@@ -395,7 +508,7 @@ class CrmSyncService
         return $date;
     }
 
-    private function recordValue(array $record, $keys, $default = null)
+    public function recordValue(array $record, $keys, $default = null)
     {
         foreach ((array)$keys as $key) {
             if (array_key_exists($key, $record)) {
@@ -418,6 +531,71 @@ class CrmSyncService
         }
 
         return $default;
+    }
+
+    public function normalizeIncomingRecord(array $record, array $config = []): array
+    {
+        $normalized = [];
+        foreach ($record as $key => $value) {
+            $normalized[$key] = $this->normalizeValue($value);
+        }
+
+        return $normalized;
+    }
+
+    private function normalizeValue($value)
+    {
+        if (is_string($value)) {
+            $value = trim($value);
+            if ($value === '' || strtolower($value) === 'null' || $value === '(null)') {
+                return null;
+            }
+        }
+
+        return $value;
+    }
+
+    private function assertRequiredFields(array $fields, array $config): void
+    {
+        foreach (($config['requiredColumns'] ?? []) as $column) {
+            $value = $this->recordValue($fields, [$column, strtolower($column)], null);
+            if ($value === null || $value === '') {
+                throw new \RuntimeException("Required field is empty: {$column}");
+            }
+        }
+    }
+
+    private function logRecordFailure(?SyncRunLog $runLog, array $config, $id, ?string $field, $originalValue, string $error, array $payload): void
+    {
+        try {
+            SyncRecordFailure::create([
+                'sync_run_log_id' => $runLog ? $runLog->id : null,
+                'resource' => $config['resource'] ?? '',
+                'record_id' => $id !== null ? (string)$id : null,
+                'field' => $field,
+                'original_value' => $originalValue !== null ? (string)$originalValue : null,
+                'error_message' => $error,
+                'payload' => $payload,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('[SYNC] Failed to persist record failure: ' . $e->getMessage());
+        }
+    }
+
+    private function tableHasColumn(string $table, string $column): bool
+    {
+        if (Schema::hasColumn($table, $column) || Schema::hasColumn($table, strtolower($column))) {
+            return true;
+        }
+
+        $wanted = strtolower($column);
+        foreach (Schema::getColumnListing($table) as $existing) {
+            if (strtolower($existing) === $wanted) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

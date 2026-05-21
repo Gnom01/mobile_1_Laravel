@@ -39,6 +39,8 @@ use App\Jobs\PullCampsJob;
 use App\Jobs\PullDayCampsJob;
 use App\Jobs\PullTicketsJob;
 use App\Models\SyncState;
+use App\Services\CrmSyncRegistry;
+use App\Services\CrmSyncService;
 use Throwable;
 
 class CrmSync extends Command
@@ -50,7 +52,9 @@ class CrmSync extends Command
      */
     protected $signature = 'crm:sync
         {resource? : Optional job/resource name, for example coursesheadings or PullCoursesHeadingsJob}
-        {--full : Reset selected sync state and run full sync}';
+        {--full : Reset selected sync state and run full sync}
+        {--dry-run : Fetch and validate a sample without writing to the database}
+        {--sample=10 : Number of CRM records to inspect during dry-run}';
 
     /**
      * The console command description.
@@ -62,7 +66,7 @@ class CrmSync extends Command
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(CrmSyncRegistry $registry, CrmSyncService $syncService)
     {
         Log::info('[CRM:SYNC] ===== crm:sync command started =====');
         $this->info('Starting CRM sync...');
@@ -126,6 +130,24 @@ class CrmSync extends Command
                 $this->error("Unknown CRM sync resource: {$this->argument('resource')}");
                 return self::FAILURE;
             }
+        }
+
+        if ($this->option('dry-run')) {
+            if ($requestedResource === '') {
+                $this->error('Dry-run requires a resource name, for example: php artisan crm:sync coursesheadings --dry-run');
+                return self::FAILURE;
+            }
+
+            $descriptor = $registry->get($requestedResource);
+            if (!$descriptor) {
+                $this->error("No sync descriptor found for {$requestedResource}. Add it to config/crm_sync.php first.");
+                return self::FAILURE;
+            }
+
+            $result = $syncService->dryRun($descriptor, (int)$this->option('sample'));
+            $this->line(json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+            return ($result['status'] ?? '') === 'ok' ? self::SUCCESS : self::FAILURE;
         }
 
         if ($this->option('full')) {
