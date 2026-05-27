@@ -28,15 +28,37 @@ class DayCampController extends Controller
     /**
      * GET /api/offers/day-camps/{id}
      */
-    public function show(int $id)
+    public function show(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
         $dayCamp = DayCamp::where('crm_id', $id)
             ->orWhere('id', $id)
             ->firstOrFail();
 
+        $mapped = $this->mapDayCamp($dayCamp);
+
+        $pricing = [];
+        if ($dayCamp->courses_headings_id) {
+            $startDate = $dayCamp->starts_at ? $dayCamp->starts_at->toDateString() : now()->toDateString();
+            $pricing = $pricingService->getPriceByCourseHeadingsID(
+                (int) $dayCamp->courses_headings_id,
+                $startDate,
+                $dayCamp->products_id ? (int) $dayCamp->products_id : null
+            );
+        }
+
+        $mapped['prices'] = $pricing;
+        $mapped['terms']  = [
+            [
+                'id'        => $dayCamp->crm_id,
+                'name'      => $dayCamp->turnus_name ?: $dayCamp->title,
+                'startDate' => $dayCamp->starts_at?->toDateString(),
+                'endDate'   => $dayCamp->ends_at?->toDateString(),
+            ]
+        ];
+
         return response()->json([
             'status' => '200',
-            'body'   => $this->mapDayCamp($dayCamp),
+            'body'   => $mapped,
         ]);
     }
 

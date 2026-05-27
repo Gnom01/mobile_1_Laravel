@@ -74,6 +74,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Orders (CRM-first)
     Route::post('/orders', [OrderController::class, 'store']);
+    Route::post('/orders/camps', [OrderController::class, 'store']);
+    Route::post('/orders/day-camps', [OrderController::class, 'store']);
+    Route::post('/orders/workshops', [OrderController::class, 'store']);
+    Route::post('/orders/tickets', [OrderController::class, 'store']);
+
 
     // Push notifications
     Route::post('/mobile/device-tokens', [MobilePushController::class, 'registerDeviceToken']);

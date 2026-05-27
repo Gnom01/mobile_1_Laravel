@@ -28,15 +28,37 @@ class CampController extends Controller
     /**
      * GET /api/offers/camps/{id}
      */
-    public function show(int $id)
+    public function show(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
         $camp = Camp::where('crm_id', $id)
             ->orWhere('id', $id)
             ->firstOrFail();
 
+        $mapped = $this->mapCamp($camp);
+
+        $pricing = [];
+        if ($camp->courses_headings_id) {
+            $startDate = $camp->starts_at ? $camp->starts_at->toDateString() : now()->toDateString();
+            $pricing = $pricingService->getPriceByCourseHeadingsID(
+                (int) $camp->courses_headings_id,
+                $startDate,
+                $camp->products_id ? (int) $camp->products_id : null
+            );
+        }
+
+        $mapped['prices'] = $pricing;
+        $mapped['terms']  = [
+            [
+                'id'        => $camp->crm_id,
+                'name'      => $camp->turnus_name ?: $camp->title,
+                'startDate' => $camp->starts_at?->toDateString(),
+                'endDate'   => $camp->ends_at?->toDateString(),
+            ]
+        ];
+
         return response()->json([
             'status' => '200',
-            'body'   => $this->mapCamp($camp),
+            'body'   => $mapped,
         ]);
     }
 

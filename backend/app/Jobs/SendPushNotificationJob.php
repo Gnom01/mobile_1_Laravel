@@ -10,6 +10,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -36,19 +37,32 @@ class SendPushNotificationJob implements ShouldQueue
 
         $notification->update(['status' => PushNotification::STATUS_SENDING]);
 
-        $sent = 0;
-        $errors = 0;
+        $totalRecipients = $notification->recipients()->count();
+        if ($totalRecipients === 0) {
+            Log::warning('Push notification has no recipients', [
+                'notification_id' => $notification->id,
+            ]);
+
+            $notification->update([
+                'status' => PushNotification::STATUS_FAILED,
+                'sent_at' => now(),
+            ]);
+
+            return;
+        }
+
+        $usersToRefresh = [];
 
         $notification->recipients()
             ->where('status', 'pending')
             ->with('deviceToken')
-            ->chunkById(200, function ($recipients) use ($pushService, $notification, &$sent, &$errors) {
+            ->chunkById(200, function ($recipients) use ($pushService, $notification, &$usersToRefresh) {
                 foreach ($recipients as $recipient) {
+                    $usersToRefresh[(int) $recipient->user_id] = true;
                     $deviceToken = $recipient->deviceToken;
 
                     if (!$deviceToken || !$deviceToken->is_active) {
                         $recipient->update(['status' => 'no_active_token', 'error_message' => 'No active device token']);
-                        $errors++;
                         continue;
                     }
 
@@ -60,26 +74,45 @@ class SendPushNotificationJob implements ShouldQueue
                             'provider_message_id' => $result['message_id'] ?? null,
                             'sent_at' => now(),
                         ]);
-                        $sent++;
                     } else {
                         $recipient->update([
                             'status' => 'failed',
                             'error_message' => $result['error'] ?? 'Push provider error',
                         ]);
-                        $errors++;
                     }
                 }
             });
 
-        DB::transaction(function () use ($notification, $sent, $errors) {
+        $notification->recipients()
+            ->where('status', 'no_active_token')
+            ->pluck('user_id')
+            ->each(function ($userId) use (&$usersToRefresh) {
+                $usersToRefresh[(int) $userId] = true;
+            });
+
+        DB::transaction(function () use ($notification) {
             $notification->refresh();
+            $sent = $notification->recipients()->where('status', 'sent')->count();
+            $errors = $notification->recipients()->whereIn('status', ['failed', 'no_active_token'])->count();
+
             $notification->update([
-                'status' => $errors > 0 && $sent === 0 ? PushNotification::STATUS_FAILED : PushNotification::STATUS_SENT,
+                'status' => PushNotification::STATUS_SENT,
                 'sent_at' => now(),
-                'sent_count' => $notification->sent_count + $sent,
-                'error_count' => $notification->error_count + $errors,
+                'sent_count' => $sent,
+                'error_count' => $errors,
             ]);
         });
+
+        foreach (array_keys($usersToRefresh) as $userId) {
+            Cache::forget("push:unread:{$userId}");
+        }
+
+        Log::info('Push notification send finished', [
+            'notification_id' => $notification->id,
+            'recipients_count' => $totalRecipients,
+            'sent_count' => $notification->fresh()->sent_count,
+            'error_count' => $notification->fresh()->error_count,
+        ]);
     }
 
     public function failed(\Throwable $exception): void

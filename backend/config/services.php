@@ -72,6 +72,11 @@ return [
         'project_id' => env('FIREBASE_PROJECT_ID'),
         'server_key' => env('FIREBASE_SERVER_KEY'),
         'credentials' => env('FIREBASE_CREDENTIALS'),
+        'allow_simulated' => filter_var(
+            env('FIREBASE_ALLOW_SIMULATED_PUSH', env('APP_ENV', 'production') === 'testing'),
+            FILTER_VALIDATE_BOOL,
+            FILTER_NULL_ON_FAILURE
+        ) ?? false,
     ],
 
 ];

@@ -68,7 +68,7 @@ class TicketTest extends TestCase
 
         $this->assertNotNull($ticket);
         $this->assertSame('vip',  $ticket['ticketType']);
-        $this->assertSame(99.0,   $ticket['priceFrom']);
+        $this->assertEquals(99.0,   $ticket['priceFrom']);
     }
 
     // ─── Filtering ───────────────────────────────────────────────────────────

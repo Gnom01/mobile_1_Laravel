@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\DeviceToken;
 use App\Models\PushNotification;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -13,8 +14,25 @@ class FirebasePushService
     {
         $projectId = config('services.firebase.project_id');
         $serverKey = config('services.firebase.server_key');
+        $credentials = config('services.firebase.credentials');
 
-        if (!$projectId && !$serverKey) {
+        if (!$projectId && $credentials) {
+            $projectId = $this->credentials()['project_id'] ?? null;
+        }
+
+        if (!$serverKey && (!$projectId || !$credentials)) {
+            if (!config('services.firebase.allow_simulated')) {
+                Log::error('Firebase push is not configured', [
+                    'notification_id' => $notification->id,
+                    'device_token_id' => $deviceToken->id,
+                ]);
+
+                return [
+                    'success' => false,
+                    'error' => 'Firebase push is not configured. Set FIREBASE_SERVER_KEY or FIREBASE_PROJECT_ID/FIREBASE_CREDENTIALS.',
+                ];
+            }
+
             return [
                 'success' => true,
                 'message_id' => 'local-' . $notification->id . '-' . $deviceToken->id,
@@ -26,10 +44,12 @@ class FirebasePushService
 
         try {
             $response = $serverKey
-                ? Http::withHeaders(['Authorization' => 'key=' . $serverKey])->post('https://fcm.googleapis.com/fcm/send', $payload)
-                : Http::withToken($this->accessToken())->post("https://fcm.googleapis.com/v1/projects/{$projectId}/messages:send", [
-                    'message' => $payload['message'],
-                ]);
+                ? Http::withHeaders(['Authorization' => 'key=' . $serverKey])
+                    ->post('https://fcm.googleapis.com/fcm/send', $payload)
+                : Http::withToken($this->accessToken())
+                    ->post("https://fcm.googleapis.com/v1/projects/{$projectId}/messages:send", [
+                        'message' => $payload['message'],
+                    ]);
         } catch (\Throwable $e) {
             Log::error('FCM request failed', ['error' => $e->getMessage()]);
             return ['success' => false, 'error' => $e->getMessage()];
@@ -108,6 +128,77 @@ class FirebasePushService
 
     private function accessToken(): string
     {
-        throw new \RuntimeException('Firebase HTTP v1 requires FIREBASE_SERVER_KEY or a project credential provider.');
+        $cacheKey = 'firebase_http_v1_access_token';
+        $cached = Cache::get($cacheKey);
+        if ($cached) {
+            return $cached;
+        }
+
+        $credentials = $this->credentials();
+        $now = time();
+        $header = ['alg' => 'RS256', 'typ' => 'JWT'];
+        $claims = [
+            'iss' => $credentials['client_email'],
+            'scope' => 'https://www.googleapis.com/auth/firebase.messaging',
+            'aud' => 'https://oauth2.googleapis.com/token',
+            'iat' => $now,
+            'exp' => $now + 3600,
+        ];
+
+        $unsignedJwt = $this->base64Url(json_encode($header))
+            . '.'
+            . $this->base64Url(json_encode($claims));
+        $signed = openssl_sign(
+            $unsignedJwt,
+            $signature,
+            $credentials['private_key'],
+            'sha256WithRSAEncryption'
+        );
+        if (!$signed) {
+            throw new \RuntimeException('Unable to sign Firebase service account JWT.');
+        }
+
+        $assertion = $unsignedJwt . '.' . $this->base64Url($signature);
+        $response = Http::asForm()->post('https://oauth2.googleapis.com/token', [
+            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion' => $assertion,
+        ]);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException('Unable to obtain Firebase access token: ' . $response->body());
+        }
+
+        $token = (string) data_get($response->json(), 'access_token');
+        $ttl = max(60, ((int) data_get($response->json(), 'expires_in', 3600)) - 60);
+        Cache::put($cacheKey, $token, now()->addSeconds($ttl));
+
+        return $token;
+    }
+
+    private function credentials(): array
+    {
+        $credentials = config('services.firebase.credentials');
+        if (!$credentials) {
+            throw new \RuntimeException('FIREBASE_CREDENTIALS is not configured.');
+        }
+
+        $path = $credentials;
+        if (!is_file($path) && function_exists('base_path')) {
+            $path = base_path($credentials);
+        }
+
+        $json = is_file($path) ? file_get_contents($path) : $credentials;
+        $data = json_decode((string) $json, true);
+
+        if (!is_array($data) || empty($data['client_email']) || empty($data['private_key'])) {
+            throw new \RuntimeException('FIREBASE_CREDENTIALS must be a service account JSON file path or JSON string.');
+        }
+
+        return $data;
+    }
+
+    private function base64Url(string $value): string
+    {
+        return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
     }
 }

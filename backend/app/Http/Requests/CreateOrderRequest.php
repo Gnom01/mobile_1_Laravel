@@ -78,6 +78,17 @@ class CreateOrderRequest extends FormRequest
             'entryFee'                     => ['nullable', 'numeric', 'min:0'],
             'contractStartDate'            => ['nullable', 'date'],
             'contractEndDate'              => ['nullable', 'date'],
+            'offerType'                    => ['nullable', 'string'],
+            'offer_type'                   => ['nullable', 'string'],
+            'turnusName'                   => ['nullable', 'string'],
+            'departurePlace'               => ['nullable', 'string'],
+            'transportOptions'             => ['nullable', 'array'],
+            'dietOptions'                  => ['nullable', 'array'],
+            'medicalRequired'              => ['nullable', 'integer'],
+            'guardianRequired'             => ['nullable', 'integer'],
+            'eventID'                      => ['nullable', 'integer'],
+            'eventId'                      => ['nullable', 'integer'],
+            'ticketType'                   => ['nullable', 'string'],
         ];
     }
 

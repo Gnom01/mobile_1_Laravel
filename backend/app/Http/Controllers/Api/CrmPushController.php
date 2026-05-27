@@ -122,6 +122,7 @@ class CrmPushController extends Controller
             'recipients as pending_count' => fn ($q) => $q->where('status', 'pending'),
             'recipients as sent_recipients_count' => fn ($q) => $q->where('status', 'sent'),
             'recipients as failed_recipients_count' => fn ($q) => $q->where('status', 'failed'),
+            'recipients as no_active_token_count' => fn ($q) => $q->where('status', 'no_active_token'),
             'recipients as read_count' => fn ($q) => $q->whereNotNull('read_at'),
             'recipients as opened_count' => fn ($q) => $q->whereNotNull('opened_at'),
         ])->findOrFail($id);

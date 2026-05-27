@@ -28,15 +28,37 @@ class TicketController extends Controller
     /**
      * GET /api/offers/tickets/{id}
      */
-    public function show(int $id)
+    public function show(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
         $ticket = Ticket::where('crm_id', $id)
-            ->orWhere('id', $id)
-            ->firstOrFail();
+             ->orWhere('id', $id)
+             ->firstOrFail();
+
+        $mapped = $this->mapTicket($ticket);
+
+        $pricing = [];
+        if ($ticket->courses_headings_id) {
+            $startDate = $ticket->starts_at ? $ticket->starts_at->toDateString() : now()->toDateString();
+            $pricing = $pricingService->getPriceByCourseHeadingsID(
+                (int) $ticket->courses_headings_id,
+                $startDate,
+                $ticket->products_id ? (int) $ticket->products_id : null
+            );
+        }
+
+        $mapped['prices'] = $pricing;
+        $mapped['terms']  = [
+            [
+                'id'        => $ticket->crm_id,
+                'name'      => $ticket->title,
+                'startDate' => $ticket->starts_at?->toDateString(),
+                'endDate'   => $ticket->ends_at?->toDateString(),
+            ]
+        ];
 
         return response()->json([
             'status' => '200',
-            'body'   => $this->mapTicket($ticket),
+            'body'   => $mapped,
         ]);
     }
 

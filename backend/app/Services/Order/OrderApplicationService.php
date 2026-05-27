@@ -12,6 +12,9 @@ use App\Exceptions\Order\OrderIdempotencyConflictException;
 use App\Jobs\SyncOrderJob;
 use App\Models\OrderRequest;
 use App\Services\Order\CrmOrderPayloadBuilder;
+use App\Services\Order\CrmCampOrderPayloadBuilder;
+use App\Services\Order\CrmDayCampOrderPayloadBuilder;
+use App\Services\Order\CrmTicketOrderPayloadBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -98,7 +101,16 @@ class OrderApplicationService
         try {
             $crmUser     = \App\Models\CrmUser::find($data->userId);
             $defaultLocId = (int) ($crmUser->Default_LocalizationsID ?? 0);
-            $crmBody     = CrmOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);
+            $offerType = $orderRequest->payload_json['offerType'] ?? $orderRequest->payload_json['offer_type'] ?? null;
+            if ($offerType === 'camp') {
+                $crmBody = CrmCampOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);
+            } elseif ($offerType === 'dayCamp') {
+                $crmBody = CrmDayCampOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);
+            } elseif ($offerType === 'ticket') {
+                $crmBody = CrmTicketOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);
+            } else {
+                $crmBody = CrmOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);
+            }
             $crmResponse = $this->crmClient->createOrder($crmBody, $data->guid);
         } catch (CrmOrderException | CrmIntegrationException $e) {
             // ── Step 7: CRM failure ───────────────────────────────────────────

@@ -33,15 +33,37 @@ class WorkshopController extends Controller
     /**
      * GET /api/offers/workshops/ygm/{id}
      */
-    public function showYgm(int $id)
+    public function showYgm(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
         $workshop = WorkshopYgm::where('crm_id', $id)
             ->orWhere('id', $id)
             ->firstOrFail();
 
+        $mapped = $this->mapWorkshop($workshop);
+
+        $pricing = [];
+        if ($workshop->courses_headings_id) {
+            $startDate = $workshop->starts_at ? $workshop->starts_at->toDateString() : now()->toDateString();
+            $pricing = $pricingService->getPriceByCourseHeadingsID(
+                (int) $workshop->courses_headings_id,
+                $startDate,
+                $workshop->products_id ? (int) $workshop->products_id : null
+            );
+        }
+
+        $mapped['prices'] = $pricing;
+        $mapped['terms']  = [
+            [
+                'id'        => $workshop->crm_id,
+                'name'      => $workshop->title,
+                'startDate' => $workshop->starts_at?->toDateString(),
+                'endDate'   => $workshop->ends_at?->toDateString(),
+            ]
+        ];
+
         return response()->json([
             'status' => '200',
-            'body'   => $this->mapWorkshop($workshop),
+            'body'   => $mapped,
         ]);
     }
 
@@ -69,15 +91,37 @@ class WorkshopController extends Controller
     /**
      * GET /api/offers/workshops/european/{id}
      */
-    public function showEuropean(int $id)
+    public function showEuropean(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
         $workshop = WorkshopEuropean::where('crm_id', $id)
             ->orWhere('id', $id)
             ->firstOrFail();
 
+        $mapped = $this->mapWorkshop($workshop);
+
+        $pricing = [];
+        if ($workshop->courses_headings_id) {
+            $startDate = $workshop->starts_at ? $workshop->starts_at->toDateString() : now()->toDateString();
+            $pricing = $pricingService->getPriceByCourseHeadingsID(
+                (int) $workshop->courses_headings_id,
+                $startDate,
+                $workshop->products_id ? (int) $workshop->products_id : null
+            );
+        }
+
+        $mapped['prices'] = $pricing;
+        $mapped['terms']  = [
+            [
+                'id'        => $workshop->crm_id,
+                'name'      => $workshop->title,
+                'startDate' => $workshop->starts_at?->toDateString(),
+                'endDate'   => $workshop->ends_at?->toDateString(),
+            ]
+        ];
+
         return response()->json([
             'status' => '200',
-            'body'   => $this->mapWorkshop($workshop),
+            'body'   => $mapped,
         ]);
     }
 
