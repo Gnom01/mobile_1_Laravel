@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('crm/push')->group(function () {
     Route::post('/preview-recipients', [CrmPushController::class, 'previewRecipients']);
+    Route::get('/notifications', [CrmPushController::class, 'index']);
     Route::post('/notifications', [CrmPushController::class, 'store']);
     Route::post('/notifications/{id}/send', [CrmPushController::class, 'send']);
     Route::post('/notifications/{id}/schedule', [CrmPushController::class, 'schedule']);

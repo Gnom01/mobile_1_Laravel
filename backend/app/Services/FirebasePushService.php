@@ -4,12 +4,61 @@ namespace App\Services;
 
 use App\Models\DeviceToken;
 use App\Models\PushNotification;
+use App\Models\PushNotificationRecipient;
+use App\Jobs\SendPushNotificationJob;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class FirebasePushService
 {
+    public function sendToUser(int $userId, string $title, string $body, string $category = 'system', ?string $deepLink = null): void
+    {
+        $notification = PushNotification::create([
+            'title' => $title,
+            'body' => $body,
+            'category' => $category,
+            'status' => PushNotification::STATUS_DRAFT,
+            'recipient_count' => 0,
+            'deep_link' => $deepLink,
+        ]);
+
+        $tokens = DeviceToken::where('user_id', $userId)->where('is_active', true)->get();
+        if ($tokens->isEmpty()) {
+            PushNotificationRecipient::create([
+                'push_notification_id' => $notification->id,
+                'user_id' => $userId,
+                'device_token_id' => null,
+                'status' => 'no_active_token',
+                'error_message' => 'No active device token',
+            ]);
+            $notification->update([
+                'status' => PushNotification::STATUS_SENT,
+                'recipient_count' => 1,
+                'error_count' => 1,
+                'sent_at' => now(),
+            ]);
+            Cache::forget("push:unread:{$userId}");
+            return;
+        }
+
+        foreach ($tokens as $token) {
+            PushNotificationRecipient::create([
+                'push_notification_id' => $notification->id,
+                'user_id' => $userId,
+                'device_token_id' => $token->id,
+                'status' => 'pending',
+            ]);
+        }
+
+        $notification->update([
+            'status' => PushNotification::STATUS_SCHEDULED,
+            'recipient_count' => $tokens->count(),
+        ]);
+
+        SendPushNotificationJob::dispatch($notification->id);
+    }
+
     public function send(DeviceToken $deviceToken, PushNotification $notification): array
     {
         $projectId = config('services.firebase.project_id');

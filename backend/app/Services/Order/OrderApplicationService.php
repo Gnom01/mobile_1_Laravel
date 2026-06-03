@@ -194,6 +194,43 @@ class OrderApplicationService
             'locked_at'            => null,
         ]);
 
+        try {
+            $offerType = $orderRequest->payload_json['offerType'] ?? $orderRequest->payload_json['offer_type'] ?? 'course';
+            $title = "Zgłoszenie zarejestrowane";
+            $body = "Dziękujemy za złożenie zamówienia!";
+            
+            if ($offerType === 'camp') {
+                $title = "Zgłoszenie na obóz!";
+                $body = "Zarejestrowaliśmy Twoje zgłoszenie na obóz. Dziękujemy!";
+            } elseif ($offerType === 'dayCamp') {
+                $title = "Zgłoszenie na półkolonię!";
+                $body = "Zarejestrowaliśmy Twoje zgłoszenie na półkolonię. Dziękujemy!";
+            } elseif ($offerType === 'workshop') {
+                $title = "Zgłoszenie na warsztaty!";
+                $body = "Zarejestrowaliśmy Twoje zgłoszenie na warsztaty. Dziękujemy!";
+            } elseif ($offerType === 'ticket') {
+                $title = "Zakup biletu!";
+                $body = "Twój bilet został wygenerowany pomyślnie.";
+            } else {
+                $title = "Zgłoszenie na kurs!";
+                $body = "Zarejestrowaliśmy Twoje zgłoszenie na kurs. Dziękujemy!";
+            }
+
+            $recipientUserId = $data->payerUserId ?: $data->userId;
+            
+            app(\App\Services\FirebasePushService::class)->sendToUser(
+                (int) $recipientUserId,
+                $title,
+                $body,
+                'system'
+            );
+        } catch (\Throwable $e) {
+            Log::error('Failed to send order push notification (non-fatal)', [
+                'error' => $e->getMessage(),
+                'guid'  => $data->guid,
+            ]);
+        }
+
         // ── Step 9: local sync ────────────────────────────────────────────────
         try {
             $this->syncService->syncFromCrmResponse($orderRequest);

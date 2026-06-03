@@ -36,6 +36,35 @@ class CrmPushController extends Controller
         ]);
     }
 
+    public function index(Request $request)
+    {
+        $this->authorizeCrm($request);
+
+        $perPage = min((int) $request->query('per_page', 50), 100);
+        $status = $request->query('status');
+
+        $query = PushNotification::query()
+            ->withCount([
+                'recipients',
+                'recipients as pending_count' => fn ($q) => $q->where('status', 'pending'),
+                'recipients as sent_recipients_count' => fn ($q) => $q->where('status', 'sent'),
+                'recipients as failed_recipients_count' => fn ($q) => $q->where('status', 'failed'),
+                'recipients as no_active_token_count' => fn ($q) => $q->where('status', 'no_active_token'),
+                'recipients as read_count' => fn ($q) => $q->whereNotNull('read_at'),
+                'recipients as opened_count' => fn ($q) => $q->whereNotNull('opened_at'),
+            ])
+            ->latest('created_at');
+
+        if ($status) {
+            $query->where('status', $status);
+        }
+
+        return response()->json([
+            'success' => true,
+            'notifications' => $query->paginate($perPage),
+        ]);
+    }
+
     public function store(CrmPushNotificationRequest $request)
     {
         $this->authorizeCrm($request);
