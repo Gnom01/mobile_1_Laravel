@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\CampController;
 use App\Http\Controllers\Api\DayCampController;
 use App\Http\Controllers\Api\TicketController;
 use App\Http\Controllers\Api\MobilePushController;
+use App\Http\Controllers\Api\DashboardController;
 
 // ───────────────────────────────────────────────
 // Mobile data query routes (require authentication)
@@ -81,6 +82,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
     // Push notifications
+    Route::get('/mobile/dashboard/banners', [DashboardController::class, 'banners']);
     Route::post('/mobile/device-tokens', [MobilePushController::class, 'registerDeviceToken']);
     Route::delete('/mobile/device-tokens/{token}', [MobilePushController::class, 'deleteDeviceToken']);
     Route::get('/mobile/notifications', [MobilePushController::class, 'index']);
