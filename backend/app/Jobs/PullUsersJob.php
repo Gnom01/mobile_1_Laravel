@@ -28,8 +28,14 @@ class PullUsersJob implements ShouldQueue
                 'current_LocalizationsID' => '0',
             ],
             'fieldMap' => function (array $r) use ($syncService) {
-                $guid = (string)($r['guid'] ?? '');
-                if (empty($guid)) {
+                $usersId = (int)($r['usersID'] ?? $r['UsersID'] ?? 0);
+                $guid = trim((string)($r['guid'] ?? ''));
+
+                if ($guid === '' && $usersId > 0) {
+                    $guid = (string) CrmUser::where('UsersID', $usersId)->value('guid');
+                }
+
+                if ($guid === '') {
                     $guid = (string) Str::uuid();
                 }
 
