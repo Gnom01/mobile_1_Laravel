@@ -9,6 +9,7 @@ return [
     'default_buffer_seconds' => 5,
     'default_page_size' => 1000,
     'delay_warning_minutes' => 15,
+    'lock_store' => env('CRM_SYNC_LOCK_STORE', 'file'),
 
     /*
      * Resource descriptors are the contract for every CRM -> mobile table.

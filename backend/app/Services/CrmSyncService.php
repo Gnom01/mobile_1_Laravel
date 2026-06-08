@@ -58,13 +58,14 @@ class CrmSyncService
             return ['status' => 'validation_failed', 'message' => implode('; ', $schemaErrors), 'failed' => count($schemaErrors)];
         }
 
-        $lock = Cache::lock("sync:{$resource}", $lockTime);
+        $lockStore = config('crm_sync.lock_store', 'file');
+        $lock = Cache::store($lockStore)->lock("sync:{$resource}", $lockTime);
         $lockAcquired = false;
 
-        // if (!$lock->get()) {
-        //     Log::warning("{$logPrefix} Already running, skipping.");
-        //     return ['status' => 'skipped', 'reason' => 'locked'];
-        // }
+        if (!$lock->get()) {
+            Log::warning("{$logPrefix} Already running, skipping.");
+            return ['status' => 'skipped', 'reason' => 'locked'];
+        }
 
         $lockAcquired = true;
 
