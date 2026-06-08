@@ -30,9 +30,17 @@ class AuthController
         $email = strtolower(trim($request->input('Email')));
         $password = trim((string) $request->input('Password'));
 
-        $user = CrmUser::where('login', $email)
-            ->orWhere('Email', $email)
-            ->first();
+        $loginCandidates = CrmUser::where(function ($query) use ($email) {
+                $query->where('login', $email)
+                    ->orWhere('Email', $email);
+            })
+            ->where('Cancelled', 0)
+            ->orderByRaw('CASE WHEN Parent_UsersID IS NULL OR Parent_UsersID = 0 THEN 0 ELSE 1 END')
+            ->orderByDesc('isMainAccount')
+            ->orderBy('UsersID')
+            ->get();
+
+        $user = $loginCandidates->first();
 
         // Check if user exists
         if (!$user) {
@@ -44,30 +52,12 @@ class AuthController
             ]);
         }
 
-        $storedHash = (string) $user->Password;
-        $isCorrect = false;
+        $user = $loginCandidates->first(fn (CrmUser $candidate) => $this->passwordMatches($candidate, $password));
 
-        // 1. Check Bcrypt / Argon2 (Laravel defaults)
-        if (str_starts_with($storedHash, '$2y$') || str_starts_with($storedHash, '$2a$') || str_starts_with($storedHash, '$argon2')) {
-            $isCorrect = Hash::check($password, $storedHash);
-        }
-        // 2. Check MD5 (Legacy CRM)
-        elseif (preg_match('/^[a-f0-9]{32}$/i', $storedHash)) {
-            $isCorrect = hash_equals(strtolower($storedHash), md5($password));
-        }
-        // 3. Check SHA1 (Legacy CRM)
-        elseif (preg_match('/^[a-f0-9]{40}$/i', $storedHash)) {
-            $isCorrect = hash_equals(strtolower($storedHash), sha1($password));
-        }
-        // 4. Check Plaintext (as fallback, matching original logic)
-        else {
-            $isCorrect = hash_equals($storedHash, $password);
-        }
-
-        if (!$isCorrect) {
+        if (!$user) {
             Log::warning('Login failed: incorrect password', [
                 'email_hash' => sha1($email),
-                'user_id' => $user->UsersID,
+                'candidate_count' => $loginCandidates->count(),
             ]);
             throw ValidationException::withMessages([
                 'Email' => ['The provided credentials are incorrect.'],
@@ -75,7 +65,8 @@ class AuthController
         }
 
         // Auto-migrate legacy/plaintext password to Bcrypt
-        if (!str_starts_with($storedHash, '$2y$') && !str_starts_with($storedHash, '$argon2')) {
+        $storedHash = (string) $user->Password;
+        if (!$this->isModernPasswordHash($storedHash)) {
             $user->Password = Hash::make($password);
             $user->save();
             Log::info('Password migrated to Bcrypt', ['user_id' => $user->UsersID]);
@@ -84,6 +75,7 @@ class AuthController
         Log::info('Login successful', [
             'email_hash' => sha1($email),
             'user_id' => $user->UsersID,
+            'guid' => $user->guid,
         ]);
 
         // Usuń poprzednie tokeny (opcjonalnie)
@@ -435,6 +427,36 @@ class AuthController
         $otp->increment('attempts');
 
         return Hash::check($code, $otp->code_hash);
+    }
+
+    private function passwordMatches(CrmUser $user, string $password): bool
+    {
+        $storedHash = (string) $user->Password;
+
+        // 1. Check Bcrypt / Argon2 (Laravel defaults)
+        if ($this->isModernPasswordHash($storedHash)) {
+            return Hash::check($password, $storedHash);
+        }
+
+        // 2. Check MD5 (Legacy CRM)
+        if (preg_match('/^[a-f0-9]{32}$/i', $storedHash)) {
+            return hash_equals(strtolower($storedHash), md5($password));
+        }
+
+        // 3. Check SHA1 (Legacy CRM)
+        if (preg_match('/^[a-f0-9]{40}$/i', $storedHash)) {
+            return hash_equals(strtolower($storedHash), sha1($password));
+        }
+
+        // 4. Check Plaintext (as fallback, matching original logic)
+        return hash_equals($storedHash, $password);
+    }
+
+    private function isModernPasswordHash(string $storedHash): bool
+    {
+        return str_starts_with($storedHash, '$2y$')
+            || str_starts_with($storedHash, '$2a$')
+            || str_starts_with($storedHash, '$argon2');
     }
 
     private function normalizePhone(string $phone): string
