@@ -35,6 +35,7 @@ class CrmSyncStatus extends Command
                     'last_start' => optional($run ? $run->started_at : null)->toDateTimeString(),
                     'last_end' => optional($finished)->toDateTimeString(),
                     'status' => $run->status ?? null,
+                    'last_attempt_at' => optional($state->last_attempt_at)->toDateTimeString(),
                     'last_sync_at' => optional($state->last_sync_at)->toDateTimeString(),
                     'last_id' => $state->last_synced_id,
                     'fetched' => $run->fetched_count ?? null,
@@ -48,7 +49,7 @@ class CrmSyncStatus extends Command
             ->all();
 
         $this->table([
-            'resource', 'last_start', 'last_end', 'status', 'last_sync_at', 'last_id',
+            'resource', 'last_start', 'last_end', 'status', 'last_attempt_at', 'last_sync_at', 'last_id',
             'fetched', 'processed', 'failed', 'duration', 'delayed', 'last_error',
         ], $rows);
 

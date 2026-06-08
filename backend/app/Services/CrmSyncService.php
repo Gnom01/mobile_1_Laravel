@@ -71,11 +71,17 @@ class CrmSyncService
         $startTime = microtime(true);
         $totalProcessed = 0;
         $runLog = null;
+        $state = null;
 
         try {
             $state = SyncState::firstOrCreate(
                 ['resource' => $resource],
-                ['last_sync_at' => null, 'is_full_synced' => false, 'last_synced_id' => 0]
+                [
+                    'last_sync_at' => null,
+                    'last_attempt_at' => null,
+                    'is_full_synced' => false,
+                    'last_synced_id' => 0,
+                ]
             );
 
             if (Schema::hasTable('sync_run_logs')) {
@@ -97,12 +103,19 @@ class CrmSyncService
                 $result = $this->syncFull($state, $config, $startTime, $maxTime, $logPrefix, $runLog);
             }
 
+            $state->last_attempt_at = now();
+            $state->save();
+
             $this->finishRunLog($runLog, $state, $result);
 
             return $result;
 
         } catch (\Throwable $e) {
             Log::error("{$logPrefix} ERROR: " . $e->getMessage(), ['exception' => $e]);
+            if ($state) {
+                $state->last_attempt_at = now();
+                $state->save();
+            }
             if ($runLog) {
                 $runLog->update([
                     'status' => 'error',

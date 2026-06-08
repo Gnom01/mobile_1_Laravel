@@ -180,8 +180,8 @@ class UsersRelationsController extends Controller
 
         // Sync updated users and relations back from CRM
         try {
-            PullUsersJob::dispatch();
-            PullUsersRelationsJob::dispatch();
+            PullUsersJob::dispatchSync();
+            PullUsersRelationsJob::dispatchSync();
         } catch (\Throwable $e) {
             Log::warning('UsersRelations store: sync jobs failed after CRM write', [
                 'error' => $e->getMessage(),
