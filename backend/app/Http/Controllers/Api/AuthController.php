@@ -18,7 +18,7 @@ class AuthController
     public function login(Request $request)
     {
 
-        // \App\Jobs\PullTicketsJob::dispatchSync();
+        // \App\Jobs\PullUsersRelationsJob::dispatchSync();
         // PullDictionariesJob::PullCoursesJob(); // trigger sync to update dictionaries immediately after login 
 
         $request->validate([
