@@ -64,7 +64,8 @@ class OtpController
         ]);
 
         $appHash = config('services.sms.app_hash', '');
-        $msg = "<#> Kod logowania: {$code}. Wazny 5 min.\n{$appHash}";
+
+        $msg = "<#> Kod logowania1: {$code}. Wazny 5 min.\n{$appHash}";
 
         $res = $sms->sendOtp($phone, $msg, (bool) config('services.sms.test_mode', false));
 
