@@ -84,6 +84,7 @@ class AuthController
         // Utworz nowy token
         $token = $user->createToken('api-token')->plainTextToken;
 
+        $user->refresh();
 
         return response()->json([
             'success' => true,

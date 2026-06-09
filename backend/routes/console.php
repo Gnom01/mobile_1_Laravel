@@ -15,47 +15,59 @@ Log::info('[CONSOLE.PHP] routes/console.php loaded - registering CRM schedules')
 
 Schedule::useCache('file');
 
-Schedule::command('crm:sync PullUsersJob')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(10)
-    ->appendOutputTo(storage_path('logs/crm-sync-users.log'))
-    ->before(function () {
-        Log::info('[SCHEDULER] crm:sync PullUsersJob is about to start');
-    })
-    ->after(function () {
-        Log::info('[SCHEDULER] crm:sync PullUsersJob has finished');
-    })
-    ->onFailure(function () {
-        Log::error('[SCHEDULER] crm:sync PullUsersJob failed');
-    });
+$crmSyncJobs = [
+    'PullClientsJob',
+    'PullUsersJob',
+    'PullPaymentsJob',
+    'PullPaymentsRealJob',
+    'PullPaymentsItemsJob',
+    'PullLocalizationsJob',
+    'PullContractsJob',
+    'PullUsersRelationsJob',
+    'PullDictionariesJob',
+    'PullProductsJob',
+    'PullCoursesJob',
+    'PullEmployeesJob',
+    'PullPriceListsTemplatesPositionsJob',
+    'PullPriceListsTemplatesJob',
+    'PullPriceListsTemplatesPositionsDimensionsJob',
+    'PullProductsDimensionsJob',
+    'PullCoursesHeadingsDimensionsJob',
+    'PullSeasonsJob',
+    'PullXSchedulesJob',
+    'PullDaysJob',
+    'PullDaysOffJob',
+    'PullProductsPaymentInstallmentsJob',
+    'PullCoursesHeadingsJob',
+    'PullSchedulesEventsSettlementsJob',
+    'PullUsersSchedulesJob',
+    'PullUsersTicketsJob',
+    'PullUserWorkshopsGroupsJob',
+    'PullUsersProductsJob',
+    'PullWorkshopsYgmJob',
+    'PullWorkshopsEuropeanJob',
+    'PullCampsJob',
+    'PullDayCampsJob',
+    'PullTicketsJob',
+];
 
-Schedule::command('crm:sync PullUsersRelationsJob')
-    ->everyFiveMinutes()
-    ->withoutOverlapping(10)
-    ->appendOutputTo(storage_path('logs/crm-sync-usersrelations.log'))
-    ->before(function () {
-        Log::info('[SCHEDULER] crm:sync PullUsersRelationsJob is about to start');
-    })
-    ->after(function () {
-        Log::info('[SCHEDULER] crm:sync PullUsersRelationsJob has finished');
-    })
-    ->onFailure(function () {
-        Log::error('[SCHEDULER] crm:sync PullUsersRelationsJob failed');
-    });
+foreach ($crmSyncJobs as $jobName) {
+    $logName = strtolower(preg_replace('/(?<!^)[A-Z]/', '-$0', str_replace('Job', '', str_replace('Pull', '', $jobName))));
 
-Schedule::command('crm:sync')
-    ->hourly()
-    ->withoutOverlapping(10)
-    ->appendOutputTo(storage_path('logs/crm-sync-full.log'))
-    ->before(function () {
-        Log::info('[SCHEDULER] crm:sync is about to start');
-    })
-    ->after(function () {
-        Log::info('[SCHEDULER] crm:sync has finished');
-    })
-    ->onFailure(function () {
-        Log::error('[SCHEDULER] crm:sync failed');
-    });
+    Schedule::command("crm:sync {$jobName}")
+        ->everyFiveMinutes()
+        ->withoutOverlapping(10)
+        ->appendOutputTo(storage_path("logs/crm-sync-{$logName}.log"))
+        ->before(function () use ($jobName) {
+            Log::info("[SCHEDULER] crm:sync {$jobName} is about to start");
+        })
+        ->after(function () use ($jobName) {
+            Log::info("[SCHEDULER] crm:sync {$jobName} has finished");
+        })
+        ->onFailure(function () use ($jobName) {
+            Log::error("[SCHEDULER] crm:sync {$jobName} failed");
+        });
+}
 
 Schedule::call(function () {
     PushNotification::query()
