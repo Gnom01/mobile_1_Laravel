@@ -20,7 +20,7 @@ class WorkshopController extends Controller
     {
         $query = WorkshopYgm::query()
             ->where('website_status_id', '!=', 0)
-            ->where('ends_at', '>=', now());
+            ->whereDate('ends_at', '>=', now()->toDateString());
         $this->applyCommonFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();
@@ -80,7 +80,7 @@ class WorkshopController extends Controller
     {
         $query = WorkshopEuropean::query()
             ->where('website_status_id', '!=', 0)
-            ->where('ends_at', '>=', now());
+            ->whereDate('ends_at', '>=', now()->toDateString());
         $this->applyCommonFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();
