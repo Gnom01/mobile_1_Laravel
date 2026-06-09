@@ -218,6 +218,28 @@ class CrmOrderClient
         return $body;
     }
 
+    /**
+     * Calculate or set workshop pricing/selection in CRM via CalculateProductForUser.
+     */
+    public function calculateWorkshopPricing(array $payload, string $guid = ''): array
+    {
+        $endpoint = '/Orders/CalculateProductForUser';
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, true);
+        $body = $this->parseCrmBodyResponse($rawBody['__raw'] ?? '');
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($body), $httpStatus, $durationMs, $error);
+
+        if ($error !== null || $httpStatus >= 400) {
+            Log::warning('CRM calculateWorkshopPricing failed', [
+                'guid'       => $guid,
+                'error'      => $error,
+                'httpStatus' => $httpStatus,
+            ]);
+            throw new \Exception("Błąd połączenia z CRM przy kalkulacji ceny: {$error}");
+        }
+
+        return $body;
+    }
+
     // ─── Internal ──────────────────────────────────────────────────────────────
 
     /**

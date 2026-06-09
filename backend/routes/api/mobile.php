@@ -93,6 +93,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/mobile/notifications/read-all', [MobilePushController::class, 'readAll']);
 
     // ─── Offer sections ─────────────────────────────
+    // Workshops Pricing & Checkout Wizards
+    Route::post('/offers/workshops/calculate-pricing', [WorkshopController::class, 'calculatePricing']);
+    Route::post('/orders/workshops/checkout',          [WorkshopController::class, 'checkout']);
+
     // Workshops YGM
     Route::get('/offers/workshops/ygm',          [WorkshopController::class, 'indexYgm']);
     Route::get('/offers/workshops/ygm/{id}',     [WorkshopController::class, 'showYgm']);

@@ -111,4 +111,32 @@ class WorkshopYgmTest extends TestCase
             ->getJson('/api/offers/workshops/ygm/999999999')
             ->assertStatus(404);
     }
+
+    public function test_calculate_pricing_rejects_invalid_category_for_ygm(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user, 'sanctum')
+            ->postJson('/api/offers/workshops/calculate-pricing', [
+                'type' => 'ygm',
+                'participantID' => 123,
+                'categoryID' => 340, // 340 is Euro, invalid for ygm
+            ])
+            ->assertStatus(400)
+            ->assertJsonPath('success', false);
+    }
+
+    public function test_checkout_rejects_invalid_products(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user, 'sanctum')
+            ->postJson('/api/orders/workshops/checkout', [
+                'type' => 'ygm',
+                'participantID' => 123,
+                'categoryID' => 333,
+                'selectedProductsIDs' => [999999], // non-existent
+            ])
+            ->assertStatus(400);
+    }
 }
