@@ -66,4 +66,4 @@ class PullWorkshopsYgmJob implements ShouldQueue
             },
         ]);
     }
-}
+}     

@@ -18,7 +18,9 @@ class WorkshopController extends Controller
      */
     public function indexYgm(Request $request)
     {
-        $query = WorkshopYgm::query()->where('website_status_id', '!=', 0);
+        $query = WorkshopYgm::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('ends_at', '>=', now());
         $this->applyCommonFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();
@@ -76,7 +78,9 @@ class WorkshopController extends Controller
      */
     public function indexEuropean(Request $request)
     {
-        $query = WorkshopEuropean::query()->where('website_status_id', '!=', 0);
+        $query = WorkshopEuropean::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('ends_at', '>=', now());
         $this->applyCommonFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();

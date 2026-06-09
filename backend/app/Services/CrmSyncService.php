@@ -62,10 +62,10 @@ class CrmSyncService
         $lock = Cache::store($lockStore)->lock("sync:{$resource}", $lockTime);
         $lockAcquired = false;
 
-        if (!$lock->get()) {
-            Log::warning("{$logPrefix} Already running, skipping.");
-            return ['status' => 'skipped', 'reason' => 'locked'];
-        }
+        // if (!$lock->get()) {
+        //     Log::warning("{$logPrefix} Already running, skipping.");
+        //     return ['status' => 'skipped', 'reason' => 'locked'];
+        // }
 
         $lockAcquired = true;
 
