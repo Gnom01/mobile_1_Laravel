@@ -207,6 +207,7 @@ class CrmSyncService
                 try {
                     $fields = $this->sanitizeRecord($fieldMap($this->normalizeIncomingRecord($r, $config)));
                     $this->assertRequiredFields($fields, $config);
+                    $fields = $this->withoutPrimaryKeyAliases($fields, $config);
                     $model  = $modelClass::updateOrCreate(
                         [$primaryKey => $id],
                         $fields
@@ -327,6 +328,7 @@ class CrmSyncService
                 try {
                     $fields = $this->sanitizeRecord($fieldMap($this->normalizeIncomingRecord($r, $config)));
                     $this->assertRequiredFields($fields, $config);
+                    $fields = $this->withoutPrimaryKeyAliases($fields, $config);
                     $model = $modelClass::updateOrCreate(
                         [$primaryKey => $id],
                         $fields
@@ -610,6 +612,28 @@ class CrmSyncService
         }
 
         return false;
+    }
+
+    private function withoutPrimaryKeyAliases(array $fields, array $config): array
+    {
+        $primaryAliases = array_filter([
+            $config['primaryKey'] ?? null,
+            $config['apiPrimaryKey'] ?? null,
+        ]);
+
+        if (empty($primaryAliases)) {
+            return $fields;
+        }
+
+        $primaryAliases = array_map(fn ($key) => strtolower((string)$key), $primaryAliases);
+
+        foreach (array_keys($fields) as $key) {
+            if (in_array(strtolower((string)$key), $primaryAliases, true)) {
+                unset($fields[$key]);
+            }
+        }
+
+        return $fields;
     }
 
     /**
