@@ -293,11 +293,18 @@ class WorkshopController extends Controller
             // Duration
             $durationInMinutes = $priceInfo ? (int) ($priceInfo['durationInMinutes'] ?? 0) : 0;
 
-            // Formatted Date
-            $timeRange = $w->start_time;
-            $timeParts = explode(' - ', $timeRange);
-            $startTimeStr = count($timeParts) > 0 ? $timeParts[0] : '00:00';
-            $endTimeStr = count($timeParts) > 1 ? $timeParts[1] : '23:59';
+            $timeRange = trim($w->start_time ?? '');
+            $startTimeStr = '00:00';
+            $endTimeStr = '23:59';
+            if (!empty($timeRange)) {
+                $timeParts = explode(' - ', $timeRange);
+                if (isset($timeParts[0]) && trim($timeParts[0]) !== '') {
+                    $startTimeStr = trim($timeParts[0]);
+                }
+                if (isset($timeParts[1]) && trim($timeParts[1]) !== '') {
+                    $endTimeStr = trim($timeParts[1]);
+                }
+            }
 
             $dateFromStr = $w->starts_at ? $w->starts_at->toDateString() . ' ' . $startTimeStr . ':00' : null;
             $dateToStr = $w->ends_at ? $w->ends_at->toDateString() . ' ' . $endTimeStr . ':00' : null;
@@ -397,11 +404,18 @@ class WorkshopController extends Controller
             // Duration
             $durationInMinutes = (int) ($priceInfo['durationInMinutes'] ?? 0);
 
-            // Date parsing
-            $timeRange = $w->start_time;
-            $timeParts = explode(' - ', $timeRange);
-            $startTimeStr = count($timeParts) > 0 ? $timeParts[0] : '00:00';
-            $endTimeStr = count($timeParts) > 1 ? $timeParts[1] : '23:59';
+            $timeRange = trim($w->start_time ?? '');
+            $startTimeStr = '00:00';
+            $endTimeStr = '23:59';
+            if (!empty($timeRange)) {
+                $timeParts = explode(' - ', $timeRange);
+                if (isset($timeParts[0]) && trim($timeParts[0]) !== '') {
+                    $startTimeStr = trim($timeParts[0]);
+                }
+                if (isset($timeParts[1]) && trim($timeParts[1]) !== '') {
+                    $endTimeStr = trim($timeParts[1]);
+                }
+            }
 
             $dateFromStr = $w->starts_at ? $w->starts_at->toDateString() . ' ' . $startTimeStr . ':00' : null;
             $dateToStr = $w->ends_at ? $w->ends_at->toDateString() . ' ' . $endTimeStr . ':00' : null;
