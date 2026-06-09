@@ -22,6 +22,8 @@ class WorkshopYgmTest extends TestCase
             'offer_type'       => 'workshop_ygm',
             'website_status_id' => 1,
             'is_closed'        => 0,
+            'starts_at'         => now()->toDateString(),
+            'ends_at'           => now()->addDay()->toDateString(),
             'available_places' => 10,
             'capacity'         => 20,
         ], $attrs));
