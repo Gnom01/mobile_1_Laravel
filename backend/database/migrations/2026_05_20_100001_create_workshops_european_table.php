@@ -12,6 +12,7 @@ return new class extends Migration
             $table->id();
             $table->unsignedInteger('crm_id')->unique();
             $table->unsignedInteger('courses_headings_id')->default(0);
+            $table->unsignedInteger('parent_courses_headings_id')->nullable()->default(0);
             $table->unsignedInteger('products_id')->default(0);
             $table->string('title', 255)->default('');
             $table->text('description')->nullable();

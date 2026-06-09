@@ -29,10 +29,17 @@ class PullWorkshopsYgmJob implements ShouldQueue
 
             'fieldMap' => function (array $r) use ($syncService): array {
                 $int = fn ($value): ?int => $value === null ? null : (int) $value;
+                $intAny = fn (array $keys): ?int => $int($this->firstValue($r, $keys));
                 $string = fn ($value): ?string => $value === null ? null : (string) $value;
 
                 return [
                     'courses_headings_id' => $int($r['coursesHeadingsID']     ?? null),
+                    'parent_courses_headings_id' => $intAny([
+                        'Parent_CoursesHeadingsID',
+                        'parent_CoursesHeadingsID',
+                        'parentCoursesHeadingsID',
+                        'parent_coursesheadingsid',
+                    ]),
                     'products_id'         => $int($r['productsID']            ?? null),
                     'title'               => $string($r['courseHeadingName']  ?? null),
                     'description'         => $string($r['description']        ?? null),
@@ -66,4 +73,27 @@ class PullWorkshopsYgmJob implements ShouldQueue
             },
         ]);
     }
-}     
+
+    private function firstValue(array $record, array $keys)
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $record)) {
+                return $record[$key];
+            }
+        }
+
+        $lower = [];
+        foreach ($record as $key => $value) {
+            $lower[strtolower((string) $key)] = $value;
+        }
+
+        foreach ($keys as $key) {
+            $lookup = strtolower((string) $key);
+            if (array_key_exists($lookup, $lower)) {
+                return $lower[$lookup];
+            }
+        }
+
+        return null;
+    }
+}

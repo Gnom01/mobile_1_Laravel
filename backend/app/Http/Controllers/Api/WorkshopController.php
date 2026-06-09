@@ -228,6 +228,7 @@ class WorkshopController extends Controller
             'workshopLevel'    => $workshop->workshop_level,
             'enrollmentMode'   => $workshop->enrollment_mode,
             'coursesHeadingsId' => $workshop->courses_headings_id,
+            'parentCoursesHeadingsId' => $workshop->parent_courses_headings_id,
             'productsId'       => $workshop->products_id,
         ];
     }
@@ -312,6 +313,7 @@ class WorkshopController extends Controller
             $normalized[] = [
                 'productsID' => (int) $w->products_id,
                 'coursesHeadingsID' => (int) $w->courses_headings_id,
+                'parentCoursesHeadingsID' => (int) $w->parent_courses_headings_id,
                 'courseHeadingName' => $w->title,
                 'styleName' => $w->style_name,
                 'price' => $priceVal,
@@ -423,6 +425,7 @@ class WorkshopController extends Controller
             $hourItem = [
                 'productsID' => (int) $w->products_id,
                 'coursesHeadingsID' => (int) $w->courses_headings_id,
+                'parentCoursesHeadingsID' => (int) $w->parent_courses_headings_id,
                 'price' => $priceVal,
                 'fullPrice' => $priceVal,
                 'priceListType' => $priceListType,
@@ -492,6 +495,7 @@ class WorkshopController extends Controller
                                 $selectedHours[] = [
                                     'productsID' => (int) $ew->products_id,
                                     'coursesHeadingsID' => (int) $ew->courses_headings_id,
+                                    'parentCoursesHeadingsID' => (int) $ew->parent_courses_headings_id,
                                     'price' => 0.0,
                                     'fullPrice' => 0.0,
                                     'priceListType' => 'EU',
