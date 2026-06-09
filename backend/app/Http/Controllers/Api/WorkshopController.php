@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use App\Services\CourseHeadingPricingService;
 use App\Services\Order\CrmOrderClient;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class WorkshopController extends Controller
@@ -25,6 +26,7 @@ class WorkshopController extends Controller
         $query = WorkshopYgm::query()
             ->where('website_status_id', '!=', 0)
             ->whereDate('ends_at', '>=', now()->toDateString());
+        $this->withProductsLevel3Category($query);
         $this->applyCommonFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();
@@ -85,6 +87,7 @@ class WorkshopController extends Controller
         $query = WorkshopEuropean::query()
             ->where('website_status_id', '!=', 0)
             ->whereDate('ends_at', '>=', now()->toDateString());
+        $this->withProductsLevel3Category($query);
         $this->applyCommonFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();
@@ -146,7 +149,7 @@ class WorkshopController extends Controller
             $query->where('age_range_id', (int) $request->input('ageRangeID'));
         }
         if ($request->filled('categoryID')) {
-            $query->where('category_id', (int) $request->input('categoryID'));
+            $this->whereProductsLevel3Category($query, (int) $request->input('categoryID'));
         }
         if ($request->filled('levelID')) {
             $query->where('level_id', (int) $request->input('levelID'));
@@ -168,6 +171,32 @@ class WorkshopController extends Controller
         }
     }
 
+    private function withProductsLevel3Category($query): void
+    {
+        $table = $query->getModel()->getTable();
+
+        $query->select("{$table}.*")->selectSub(function ($sub) use ($table) {
+            $sub->from('coursesheadingsdimensions as chd')
+                ->select('chd.positiondvid')
+                ->whereColumn('chd.coursesheadingsid', "{$table}.courses_headings_id")
+                ->where('chd.dictionaryname', 'ProductsLevel3')
+                ->limit(1);
+        }, 'products_level3_category_id');
+    }
+
+    private function whereProductsLevel3Category($query, int $categoryID): void
+    {
+        $table = $query->getModel()->getTable();
+
+        $query->whereExists(function ($sub) use ($table, $categoryID) {
+            $sub->select(DB::raw(1))
+                ->from('coursesheadingsdimensions as chd')
+                ->whereColumn('chd.coursesheadingsid', "{$table}.courses_headings_id")
+                ->where('chd.dictionaryname', 'ProductsLevel3')
+                ->where('chd.positiondvid', $categoryID);
+        });
+    }
+
     private function mapWorkshop($workshop): array
     {
         return [
@@ -183,7 +212,7 @@ class WorkshopController extends Controller
             'localizationName' => $workshop->localization_name,
             'ageRangeId'       => $workshop->age_range_id,
             'ageRangeName'     => $workshop->age_range_name,
-            'categoryId'       => $workshop->category_id,
+            'categoryId'       => $workshop->products_level3_category_id ?? $workshop->category_id,
             'categoryName'     => $workshop->category_name,
             'levelId'          => $workshop->level_id,
             'levelName'        => $workshop->level_name,
@@ -223,17 +252,19 @@ class WorkshopController extends Controller
                 return response()->json(['success' => false, 'message' => 'Nieprawidłowa kategoria dla YGM'], 400);
             }
             $workshops = WorkshopYgm::where('website_status_id', '!=', 0)
-                ->whereDate('ends_at', '>=', now()->toDateString())
-                ->where('category_id', $categoryID)
-                ->get();
+                ->whereDate('ends_at', '>=', now()->toDateString());
+            $this->withProductsLevel3Category($workshops);
+            $this->whereProductsLevel3Category($workshops, (int) $categoryID);
+            $workshops = $workshops->get();
         } else {
             if ($categoryID !== 340) {
                 return response()->json(['success' => false, 'message' => 'Nieprawidłowa kategoria dla Euro'], 400);
             }
             $workshops = WorkshopEuropean::where('website_status_id', '!=', 0)
-                ->whereDate('ends_at', '>=', now()->toDateString())
-                ->where('category_id', $categoryID)
-                ->get();
+                ->whereDate('ends_at', '>=', now()->toDateString());
+            $this->withProductsLevel3Category($workshops);
+            $this->whereProductsLevel3Category($workshops, (int) $categoryID);
+            $workshops = $workshops->get();
         }
 
         $normalized = [];
@@ -313,10 +344,13 @@ class WorkshopController extends Controller
         $selectedIDs = $request->input('selectedProductsIDs');
 
         if ($type === 'ygm') {
-            $workshops = WorkshopYgm::whereIn('products_id', $selectedIDs)->get();
+            $workshops = WorkshopYgm::whereIn('products_id', $selectedIDs);
         } else {
-            $workshops = WorkshopEuropean::whereIn('products_id', $selectedIDs)->get();
+            $workshops = WorkshopEuropean::whereIn('products_id', $selectedIDs);
         }
+        $this->withProductsLevel3Category($workshops);
+        $this->whereProductsLevel3Category($workshops, $categoryID);
+        $workshops = $workshops->get();
 
         if ($workshops->count() !== count($selectedIDs)) {
             return response()->json(['success' => false, 'message' => 'Wybrane warsztaty są niepoprawne lub wygasły.'], 400);
@@ -389,7 +423,7 @@ class WorkshopController extends Controller
                 'name' => $w->title,
                 'instructorName' => $w->instructors,
                 'time' => $w->start_time,
-                'styleID' => $w->category_id,
+                'styleID' => $w->products_level3_category_id ?? $w->category_id,
             ];
 
             $selectedHours[] = $hourItem;
@@ -408,8 +442,9 @@ class WorkshopController extends Controller
 
             if (!empty($fullPassNames)) {
                 $allEuroWorkshops = WorkshopEuropean::where('website_status_id', '!=', 0)
-                    ->whereDate('ends_at', '>=', now()->toDateString())
-                    ->get();
+                    ->whereDate('ends_at', '>=', now()->toDateString());
+                $this->withProductsLevel3Category($allEuroWorkshops);
+                $allEuroWorkshops = $allEuroWorkshops->get();
 
                 foreach ($allEuroWorkshops as $ew) {
                     $ewPrices = $pricingService->getPriceByCourseHeadingsID(
@@ -457,7 +492,7 @@ class WorkshopController extends Controller
                                     'name' => $ew->title,
                                     'instructorName' => $ew->instructors,
                                     'time' => $ew->start_time,
-                                    'styleID' => $ew->category_id,
+                                    'styleID' => $ew->products_level3_category_id ?? $ew->category_id,
                                     'isPassIncluded' => true,
                                 ];
                             }

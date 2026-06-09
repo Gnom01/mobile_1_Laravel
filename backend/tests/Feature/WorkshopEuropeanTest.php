@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use App\Models\WorkshopEuropean;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class WorkshopEuropeanTest extends TestCase
@@ -51,8 +52,23 @@ class WorkshopEuropeanTest extends TestCase
     public function test_can_filter_european_by_category(): void
     {
         $user = User::factory()->create();
-        $this->makeWorkshop(['category_id' => 5]);
-        $this->makeWorkshop(['category_id' => 6]);
+        $matching = $this->makeWorkshop(['courses_headings_id' => 900001]);
+        $other = $this->makeWorkshop(['courses_headings_id' => 900002]);
+
+        DB::table('coursesheadingsdimensions')->insert([
+            [
+                'coursesheadingsdimensionsid' => 9900001,
+                'coursesheadingsid' => $matching->courses_headings_id,
+                'dictionaryname' => 'ProductsLevel3',
+                'positiondvid' => 5,
+            ],
+            [
+                'coursesheadingsdimensionsid' => 9900002,
+                'coursesheadingsid' => $other->courses_headings_id,
+                'dictionaryname' => 'ProductsLevel3',
+                'positiondvid' => 6,
+            ],
+        ]);
 
         $response = $this->actingAs($user, 'sanctum')
             ->getJson('/api/offers/workshops/european?categoryID=5');
