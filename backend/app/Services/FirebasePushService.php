@@ -123,6 +123,7 @@ class FirebasePushService
 
     private function payload(DeviceToken $deviceToken, PushNotification $notification): array
     {
+        $unreadCount = $this->unreadCountForUser((int) $deviceToken->user_id);
         $data = [
             'notification_id' => (string) $notification->id,
             'title' => $notification->title,
@@ -131,6 +132,8 @@ class FirebasePushService
             'image_url' => (string) $notification->image_url,
             'deep_link' => (string) $notification->deep_link,
             'created_at' => optional($notification->created_at)->toIso8601String(),
+            'unread_count' => (string) $unreadCount,
+            'badge' => (string) $unreadCount,
         ];
 
         if (config('services.firebase.server_key')) {
@@ -142,6 +145,8 @@ class FirebasePushService
                     'body' => $notification->body,
                     'image' => $notification->image_url,
                     'sound' => 'default',
+                    'badge' => (string) $unreadCount,
+                    'android_channel_id' => 'eds_high_importance',
                 ]),
                 'data' => $data,
             ];
@@ -161,18 +166,32 @@ class FirebasePushService
                     'notification' => [
                         'channel_id' => 'eds_high_importance',
                         'sound' => 'default',
+                        'notification_count' => $unreadCount,
                     ],
                 ],
                 'apns' => [
                     'payload' => [
                         'aps' => [
                             'sound' => 'default',
+                            'badge' => $unreadCount,
                             'mutable-content' => $notification->image_url ? 1 : 0,
                         ],
                     ],
                 ],
             ],
         ];
+    }
+
+    private function unreadCountForUser(int $userId): int
+    {
+        return PushNotificationRecipient::where('user_id', $userId)
+            ->whereNull('read_at')
+            ->whereHas('notification', fn ($query) => $query->whereIn('status', [
+                PushNotification::STATUS_SENT,
+                PushNotification::STATUS_SENDING,
+            ]))
+            ->distinct('push_notification_id')
+            ->count('push_notification_id');
     }
 
     private function accessToken(): string

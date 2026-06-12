@@ -74,7 +74,8 @@ class MobilePushController extends Controller
             return PushNotificationRecipient::where('user_id', $userId)
                 ->whereNull('read_at')
                 ->whereHas('notification', fn ($q) => $q->whereIn('status', [PushNotification::STATUS_SENT, PushNotification::STATUS_SENDING]))
-                ->count();
+                ->distinct('push_notification_id')
+                ->count('push_notification_id');
         });
 
         return response()->json(['success' => true, 'unread_count' => $count]);
@@ -94,7 +95,7 @@ class MobilePushController extends Controller
 
     public function markRead(Request $request, int $id)
     {
-        $this->recipient($request, $id)->update(['read_at' => now()]);
+        $this->recipients($request, $id)->update(['read_at' => now()]);
         $this->forgetUnread($request->user()->UsersID);
 
         return response()->json(['success' => true]);
@@ -102,7 +103,7 @@ class MobilePushController extends Controller
 
     public function markOpened(Request $request, int $id)
     {
-        $this->recipient($request, $id)->update(['opened_at' => now(), 'read_at' => now()]);
+        $this->recipients($request, $id)->update(['opened_at' => now(), 'read_at' => now()]);
         $this->forgetUnread($request->user()->UsersID);
 
         return response()->json(['success' => true]);
@@ -124,6 +125,14 @@ class MobilePushController extends Controller
         return PushNotificationRecipient::where('user_id', $request->user()->UsersID)
             ->where('push_notification_id', $notificationId)
             ->firstOrFail();
+    }
+
+    private function recipients(Request $request, int $notificationId)
+    {
+        $this->recipient($request, $notificationId);
+
+        return PushNotificationRecipient::where('user_id', $request->user()->UsersID)
+            ->where('push_notification_id', $notificationId);
     }
 
     private function unreadKey(int $userId): string
