@@ -10,16 +10,14 @@ class ContactMessage extends Model
     protected $guarded = [];
 
     protected $casts = [
-        'sender_user_id'    => 'integer',
-        'recipient_user_id' => 'integer',
-        'read_at'           => 'datetime',
+        'participant_user_id' => 'integer',
+        'instructor_user_id'  => 'integer',
+        'sender_user_id'      => 'integer',
     ];
 
-    /** Klucz wątku — posortowana para UsersID (stały niezależnie od kierunku). */
-    public static function conversationKey(int $a, int $b): string
+    /** Klucz wątku — zakotwiczony na uczestniku (dziecku) i instruktorze. */
+    public static function threadKey(int $participantUserId, int $instructorUserId): string
     {
-        $lo = min($a, $b);
-        $hi = max($a, $b);
-        return "{$lo}-{$hi}";
+        return "p{$participantUserId}-i{$instructorUserId}";
     }
 }

@@ -30,39 +30,60 @@ final class RoleResolver
             return [2];
         }
 
-        // Instruktor ma pierwszeństwo — niezależnie od kontekstu logowania.
-        if (self::isEmployee($usersId)) {
-            return [3];
-        }
-
-        // Kontekst SMS: jawnie wiemy, czy to właściciel telefonu, czy podopieczny.
+        // Kontekst SMS „family" — podopieczny zawsze jako dziecko.
         if ($relationship === 'family') {
             return [1];
         }
-        if ($relationship === 'self') {
-            return [2];
+
+        $isEmployee = self::isEmployee($usersId);
+        $hasChildren = self::hasChildren($usersId);
+        $isChild = self::isSomeonesChild($usersId);
+
+        // Budujemy listę ról z priorytetem: RODZIC przed instruktorem.
+        // Dzięki temu konto, które jest jednocześnie rodzicem i pracownikiem
+        // (np. trener mający własne dzieci), domyślnie widzi panel rodzica
+        // (z Płatnościami i Ofertą), a rola instruktora jest dostępna jako druga.
+        $roles = [];
+        if ($hasChildren) {
+            $roles[] = 2; // rodzic / opiekun
+        }
+        if ($isEmployee) {
+            $roles[] = 3; // instruktor
         }
 
-        // Logowanie hasłem — wyznacz z relacji rodzic/dziecko.
+        if (empty($roles)) {
+            if ($relationship === 'self') {
+                $roles[] = 2; // właściciel telefonu bez dzieci/etatu → rodzic/dorosły
+            } elseif ($isChild) {
+                $roles[] = 1; // sam jest czyimś dzieckiem
+            } else {
+                $roles[] = 2; // bezpieczny domyślny
+            }
+        }
+
+        return $roles;
+    }
+
+    private static function hasChildren(int $usersId): bool
+    {
         try {
-            $hasChildren = UsersRelation::where('Parent_UsersID', $usersId)
+            return UsersRelation::where('Parent_UsersID', $usersId)
                 ->where('Cancelled', 0)
                 ->exists();
-            if ($hasChildren) {
-                return [2];
-            }
-
-            $isSomeonesChild = UsersRelation::where('UsersID', $usersId)
-                ->where('Cancelled', 0)
-                ->exists();
-            if ($isSomeonesChild) {
-                return [1];
-            }
         } catch (\Throwable $e) {
-            // brak tabeli / błąd → bezpieczny domyślny rodzic
+            return false;
         }
+    }
 
-        return [2];
+    private static function isSomeonesChild(int $usersId): bool
+    {
+        try {
+            return UsersRelation::where('UsersID', $usersId)
+                ->where('Cancelled', 0)
+                ->exists();
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     private static function isEmployee(int $usersId): bool

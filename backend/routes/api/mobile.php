@@ -90,9 +90,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/instructor/groups/{groupId}/participants', [InstructorController::class, 'participants']);
     Route::post('/instructor/messages', [InstructorController::class, 'sendMessage']);
 
-    // Kontakt / czat uczestnik ↔ instruktor
-    Route::get('/contact/instructors', [ContactController::class, 'instructors']);
-    Route::get('/contact/conversation/{instructorUserId}', [ContactController::class, 'conversation']);
+    // Kontakt / czat uczestnik ↔ instruktor (z dostępem rodzica do wątków dzieci)
+    Route::get('/contact/participants', [ContactController::class, 'participants']);
+    Route::get('/contact/threads', [ContactController::class, 'threads']);
+    Route::get('/contact/conversation', [ContactController::class, 'conversation']);
     Route::post('/contact/messages', [ContactController::class, 'send']);
 
     // Push notifications
