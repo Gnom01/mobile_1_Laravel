@@ -32,6 +32,8 @@ final class CrmCampOrderPayloadBuilder
             'dietOptions'       => $payload['dietOptions']       ?? [],
             'medicalRequired'   => (int) ($payload['medicalRequired']  ?? 0),
             'guardianRequired'  => (int) ($payload['guardianRequired'] ?? 0),
+            // Obiekt `form` wymagany przez CRM /Orders/createOrder dla obozu.
+            'form'              => CampOrderFormBuilder::build($payload),
         ]);
     }
 }

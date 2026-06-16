@@ -101,6 +101,85 @@ class DictionaryController extends Controller
     }
 
     /**
+     * Get all camp / day-camp related dimensions grouped by key.
+     * Used by the mobile app to populate the camp enrollment wizard
+     * (age ranges, dance styles, diets, locations, t-shirt sizes).
+     *
+     * Wymiary pochodzą z już zsynchronizowanej tabeli `dictionaries`
+     * (PullDictionariesJob → /CrmToMobileSync/getDictionariesMobile).
+     * Rozmiary koszulek nie mają słownika w CRM — zwracamy listę statyczną
+     * (jak w portalu). Turnus = sama oferta obozu (coursesHeadingsID).
+     *
+     * GET /dictionaries/camps
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getCampDictionaries()
+    {
+        // Map: response key => DictionaryName in DB
+        $groups = [
+            'courseAgeRanges'  => 'Dimension/Grupy wiekowe',
+            'courseDanceStyle' => 'Dimension/Style taneczne',
+            'localizations'    => 'Dimension/Lokalizacje',
+            'diet'             => 'dietCamp',
+            'season'           => 'productsLevel3',
+        ];
+
+        $dictionaryNames = array_values($groups);
+
+        $rows = Dictionary::query()
+            ->where('Cancelled', 0)
+            ->whereIn('DictionaryName', $dictionaryNames)
+            ->orderBy('OrderPosition')
+            ->orderBy('Name')
+            ->get();
+
+        $mapRow = fn($item) => [
+            'dictionariesID'        => $item->DictionariesID,
+            'parent_DictionariesID' => $item->Parent_DictionariesID,
+            'dictionaryName'        => $item->DictionaryName,
+            'parent_valueID'        => $item->Parent_ValueID,
+            'name'                  => $item->Name,
+            'valueID'               => $item->ValueID,
+            'valueText'             => $item->ValueText,
+            'orderPosition'         => $item->OrderPosition,
+            'description'           => $item->Description,
+            'editable'              => $item->Editable,
+            'itemColor'             => $item->ItemColor,
+        ];
+
+        $result = [];
+        foreach ($groups as $key => $dictionaryName) {
+            $result[$key] = $rows
+                ->where('DictionaryName', $dictionaryName)
+                ->values()
+                ->map($mapRow)
+                ->values()
+                ->all();
+        }
+
+        // Rozmiary koszulek — brak słownika w CRM, lista statyczna (jak w portalu).
+        $tshirtSizes = config('camps.tshirt_sizes', [
+            '134-140 cm', '146-152 cm', '158-164 cm',
+            'XS', 'S', 'M', 'L', 'XL',
+        ]);
+        $result['tshirtSizes'] = [];
+        foreach (array_values($tshirtSizes) as $idx => $size) {
+            $result['tshirtSizes'][] = [
+                'name'          => $size,
+                'valueID'       => $size,
+                'orderPosition' => $idx,
+            ];
+        }
+
+        return response()->json([
+            'status'      => '200',
+            'body'        => $result,
+            'recordCount' => 0,
+        ]);
+    }
+
+    /**
      * Fetch employees from the crm_users / users table.
      * Falls back to an empty array when the employees table does not yet exist.
      *

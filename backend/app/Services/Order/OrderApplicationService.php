@@ -102,7 +102,7 @@ class OrderApplicationService
             $crmUser     = \App\Models\CrmUser::find($data->userId);
             $defaultLocId = (int) ($crmUser->Default_LocalizationsID ?? 0);
             $offerType = $orderRequest->payload_json['offerType'] ?? $orderRequest->payload_json['offer_type'] ?? null;
-            if ($offerType === 'camp') {
+            if ($offerType === 'camp' || $offerType === 'summerCourse') {
                 $crmBody = CrmCampOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);
             } elseif ($offerType === 'dayCamp') {
                 $crmBody = CrmDayCampOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);

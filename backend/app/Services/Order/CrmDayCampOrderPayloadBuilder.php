@@ -30,6 +30,9 @@ final class CrmDayCampOrderPayloadBuilder
             'dietOptions'       => $payload['dietOptions']       ?? [],
             'medicalRequired'   => (int) ($payload['medicalRequired']  ?? 0),
             'guardianRequired'  => (int) ($payload['guardianRequired'] ?? 0),
+            // Obiekt `form` wymagany przez CRM /Orders/createOrder dla półkolonii
+            // (z dodatkowymi zgodami: marketing, Tutlo, karta kwalifikacyjna).
+            'form'              => CampOrderFormBuilder::build($payload, true),
         ]);
     }
 }

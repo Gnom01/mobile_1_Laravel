@@ -89,6 +89,10 @@ class CreateOrderRequest extends FormRequest
             'eventID'                      => ['nullable', 'integer'],
             'eventId'                      => ['nullable', 'integer'],
             'ticketType'                   => ['nullable', 'string'],
+
+            // ── Formularz obozowy (obozy / półkolonie / kursy wakacyjne) ───────
+            'form'                         => ['nullable', 'array'],
+            'campForm'                     => ['nullable', 'array'],
         ];
     }
 

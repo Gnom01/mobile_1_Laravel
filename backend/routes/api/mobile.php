@@ -60,6 +60,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dictionaries', [DictionaryController::class, 'index']);
     Route::get('/dictionaries/courses', [DictionaryController::class, 'getCoursesDictionaries']);
     Route::get('/courses/dictionaries', [DictionaryController::class, 'getCoursesDictionaries']);
+    Route::get('/dictionaries/camps',   [DictionaryController::class, 'getCampDictionaries']);
+    Route::get('/camps/dictionaries',   [DictionaryController::class, 'getCampDictionaries']);
 
     // Courses search
     Route::post('/courses/search', [CourseController::class, 'search']);
