@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\DayCampController;
 use App\Http\Controllers\Api\TicketController;
 use App\Http\Controllers\Api\MobilePushController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\InstructorController;
 
 // ───────────────────────────────────────────────
 // Mobile data query routes (require authentication)
@@ -82,6 +83,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/orders/workshops', [OrderController::class, 'store']);
     Route::post('/orders/tickets', [OrderController::class, 'store']);
 
+
+    // Instructor (grupy + komunikaty push)
+    Route::get('/instructor/groups', [InstructorController::class, 'groups']);
+    Route::get('/instructor/groups/{groupId}/participants', [InstructorController::class, 'participants']);
+    Route::post('/instructor/messages', [InstructorController::class, 'sendMessage']);
 
     // Push notifications
     Route::get('/mobile/dashboard/banners', [DashboardController::class, 'banners']);
