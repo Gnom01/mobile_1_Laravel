@@ -22,7 +22,6 @@ class OtpController
     public function requestOtp(Request $request, SerwerSmsClient $sms)
     {
 
-    // \App\Jobs\PullSchedulesEventsSettlementsJob::dispatchSync();
         $request->validate([
             'phone' => 'required|string|max:25',
         ]);
@@ -230,6 +229,7 @@ class OtpController
             'email'                    => $phoneOwner->Email,
             'login'                    => $phoneOwner->login ?? $phoneOwner->Email,
             'relationship'             => 'self',
+            'role'                     => \App\Support\RoleResolver::resolve($phoneOwner, 'self'),
             'participantRelationsDVID' => 0,
         ];
 
@@ -253,6 +253,7 @@ class OtpController
                 'email'                    => $member->Email,
                 'login'                    => $phoneOwner->login ?? $phoneOwner->Email,
                 'relationship'             => 'family',
+                'role'                     => \App\Support\RoleResolver::resolve($member, 'family'),
                 'participantRelationsDVID' => (int) $rel->ParticipantRelationsDVID,
             ];
         }
@@ -376,7 +377,7 @@ class OtpController
                 'email'                    => $selectedUser->Email,
                 'first_name'               => $selectedUser->FirstName,
                 'last_name'                => $selectedUser->LastName,
-                'role'                     => 2,
+                'role'                     => \App\Support\RoleResolver::resolve($selectedUser, $relationship),
                 'relationship'             => $relationship,
                 'participantRelationsDVID' => $participantRelationsDVID,
             ],

@@ -94,7 +94,7 @@ class AuthController
                 'email' => $user->Email,
                 'first_name' => $user->FirstName,
                 'last_name' => $user->LastName,
-                'role' => 2,
+                'role' => \App\Support\RoleResolver::resolve($user),
             ],
         ]);
     }
@@ -282,7 +282,7 @@ class AuthController
                 'email' => $user->Email,
                 'first_name' => $user->FirstName,
                 'last_name' => $user->LastName,
-                'role' => 2,
+                'role' => \App\Support\RoleResolver::resolve($user),
             ],
         ]);
     }
