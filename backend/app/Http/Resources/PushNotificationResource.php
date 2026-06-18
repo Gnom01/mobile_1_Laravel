@@ -9,7 +9,9 @@ class PushNotificationResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $recipient = $this->whenLoaded('recipients')->first();
+        $recipients = $this->relationLoaded('recipients') ? $this->recipients : collect();
+        $readRecipient = $recipients->first(fn ($recipient) => $recipient->read_at !== null);
+        $openedRecipient = $recipients->first(fn ($recipient) => $recipient->opened_at !== null);
 
         return [
             'id' => $this->id,
@@ -23,9 +25,9 @@ class PushNotificationResource extends JsonResource
             'payload' => $this->payload_json,
             'created_at' => optional($this->created_at)->toIso8601String(),
             'sent_at' => optional($this->sent_at)->toIso8601String(),
-            'read_at' => optional($recipient ? $recipient->read_at : null)->toIso8601String(),
-            'opened_at' => optional($recipient ? $recipient->opened_at : null)->toIso8601String(),
-            'is_read' => (bool) ($recipient ? $recipient->read_at : null),
+            'read_at' => optional($readRecipient ? $readRecipient->read_at : null)->toIso8601String(),
+            'opened_at' => optional($openedRecipient ? $openedRecipient->opened_at : null)->toIso8601String(),
+            'is_read' => (bool) $readRecipient,
         ];
     }
 }

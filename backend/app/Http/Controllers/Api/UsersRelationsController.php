@@ -103,6 +103,9 @@ class UsersRelationsController extends Controller
             'marketingAgreement'             => ['sometimes', 'nullable', 'integer', 'in:0,1'],
             'phone'                          => ['sometimes', 'nullable', 'string', 'max:30'],
             'email'                          => ['sometimes', 'nullable', 'email', 'max:255'],
+            // Typ relacji z perspektywy zalogowanego: 2=Rodzic, 1=Opiekun,
+            // 3=Rodzeństwo, 5=Dziecko. Domyślnie 2 (dodaję swoje dziecko).
+            'participantRelationsDVID'       => ['sometimes', 'nullable', 'integer', 'in:1,2,3,5'],
         ]);
 
         $crmPayload = [
@@ -154,6 +157,9 @@ class UsersRelationsController extends Controller
             'localizationsID'               => null,
             'localizationsIDArray'          => [(int) ($authUser->Default_LocalizationsID ?? 0)],
             'current_LocalizationsID'       => (string) ($authUser->Default_LocalizationsID ?? 0),
+            // CRM utworzy relację rodzic–uczestnik na podstawie parent_UsersID
+            // + tego pola (2 = zalogowany jest rodzicem dodawanej osoby).
+            'participantRelationsDVID'      => (int) ($validated['participantRelationsDVID'] ?? 2),
         ];
 
         try {

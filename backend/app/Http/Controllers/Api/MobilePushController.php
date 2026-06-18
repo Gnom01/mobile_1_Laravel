@@ -56,7 +56,7 @@ class MobilePushController extends Controller
 
         $query = PushNotification::query()
             ->whereHas('recipients', fn ($q) => $q->where('user_id', $userId))
-            ->with(['recipients' => fn ($q) => $q->where('user_id', $userId)->limit(1)])
+            ->with(['recipients' => fn ($q) => $q->where('user_id', $userId)])
             ->whereIn('status', [PushNotification::STATUS_SENT, PushNotification::STATUS_SENDING])
             ->latest('created_at');
 
@@ -87,7 +87,7 @@ class MobilePushController extends Controller
         $notification = PushNotification::query()
             ->whereKey($id)
             ->whereHas('recipients', fn ($q) => $q->where('user_id', $userId))
-            ->with(['recipients' => fn ($q) => $q->where('user_id', $userId)->limit(1)])
+            ->with(['recipients' => fn ($q) => $q->where('user_id', $userId)])
             ->firstOrFail();
 
         return new PushNotificationResource($notification);
