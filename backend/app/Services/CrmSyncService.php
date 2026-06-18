@@ -7,11 +7,19 @@ use App\Models\SyncRunLog;
 use App\Models\SyncRecordFailure;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 
 class CrmSyncService
 {
+    /**
+     * After this many failed attempts a single record is treated as poison:
+     * the resume cursor is allowed to advance past it (so the whole resource
+     * is not stuck forever) while the dead-letter row is kept for manual review.
+     */
+    private const MAX_RECORD_ATTEMPTS = 5;
+
     private CrmClient $crm;
 
     public function __construct(CrmClient $crm)
@@ -158,18 +166,28 @@ class CrmSyncService
             $state->save();
         }
 
-        // Resume from last saved ID (0 = start from beginning)
-        $lastId = (int)($state->last_synced_id ?? 0);
+        // Two distinct positions:
+        //  - $scanId       : how far we have READ from CRM (drives pagination).
+        //  - $checkpointId : how far we can SAFELY resume from — the highest
+        //                    contiguous prefix of records that actually saved.
+        // We never persist $checkpointId past a record that failed to save, so a
+        // failed record is re-fetched and retried on the next run instead of
+        // being silently skipped forever.
+        $scanId = (int)($state->last_synced_id ?? 0);
+        $checkpointId = $scanId;
+        $checkpointDate = $state->last_sync_at; // Carbon|null, only ever moves forward
+        $blocked = false; // becomes true after the first unresolved failure this run
         $totalFetched = 0;
         $totalProcessed = 0;
         $totalFailed = 0;
-        $pageMaxDate = null;
 
-        Log::info("{$logPrefix} Full sync mode (lastSyncedId), resuming from ID {$lastId}");
+        $openFailures = $this->loadOpenFailureIds($config);
+
+        Log::info("{$logPrefix} Full sync mode (lastSyncedId), resuming from ID {$scanId}");
 
         do {
             $params = array_merge([
-                'lastSyncedId'  => $lastId,
+                'lastSyncedId'  => $scanId,
                 $pageSizeParam  => $pageSize,
                 'page'          => 1,
             ], $extraParams);
@@ -186,7 +204,7 @@ class CrmSyncService
             $itemCount = count($items);
             $totalFetched += $itemCount;
 
-            Log::info("{$logPrefix} Fetched {$itemCount} items after ID {$lastId}");
+            Log::info("{$logPrefix} Fetched {$itemCount} items after ID {$scanId}");
 
             foreach ($items as $r) {
                 if (!is_array($r)) continue;
@@ -195,68 +213,90 @@ class CrmSyncService
                 $id = (int)$this->recordValue($r, [$apiPrimaryKey, $primaryKey], 0);
                 if (!$id) continue;
 
-                if ($id > $lastId) {
-                    $lastId = $id;
+                if ($id > $scanId) {
+                    $scanId = $id; // advance read position so pagination keeps moving forward
                 }
+
+                $whenUpdated = $this->validateDate($this->recordValue($r, $whenUpdatedKey, ''), null);
 
                 if (isset($config['skipIf']) && ($config['skipIf'])($r)) {
                     Log::debug("{$logPrefix} Skipping record ID {$id} (skipIf matched)");
+                    // An intentional skip counts as "handled" — safe to advance the checkpoint.
+                    if (!$blocked) {
+                        $checkpointId = max($checkpointId, $id);
+                        $checkpointDate = $this->maxDate($checkpointDate, $whenUpdated);
+                    }
                     continue;
                 }
 
                 try {
-                    $fields = $this->sanitizeRecord($fieldMap($this->normalizeIncomingRecord($r, $config)));
-                    $this->assertRequiredFields($fields, $config);
-                    $fields = $this->withoutPrimaryKeyAliases($fields, $config);
-                    $model  = $modelClass::updateOrCreate(
-                        [$primaryKey => $id],
-                        $fields
-                    );
+                    $this->upsertRecord($modelClass, $primaryKey, $id, $r, $config, $fieldMap);
+                    $totalProcessed++;
 
-                    if (isset($config['afterSave'])) {
-                        ($config['afterSave'])($r, $model);
+                    if (isset($openFailures[(string)$id])) {
+                        $this->markFailureResolved($config, $id);
+                        unset($openFailures[(string)$id]);
                     }
 
-                    $totalProcessed++;
+                    if (!$blocked) {
+                        $checkpointId = max($checkpointId, $id);
+                        $checkpointDate = $this->maxDate($checkpointDate, $whenUpdated);
+                    }
                 } catch (\Throwable $e) {
                     $totalFailed++;
-                    $this->logRecordFailure($runLog, $config, $id, null, null, $e->getMessage(), $r);
-                    Log::error("{$logPrefix} Record {$id} failed, continuing sync: " . $e->getMessage(), [
+                    $openFailures[(string)$id] = true;
+                    $attempts = $this->recordFailure($runLog, $config, $id, $e->getMessage(), $r);
+                    Log::error("{$logPrefix} Record {$id} failed (attempt {$attempts}): " . $e->getMessage(), [
                         'record_id' => $id,
-                        'record' => $r,
                         'exception' => $e,
                     ]);
-                }
 
-                $whenUpdated = $this->validateDate($this->recordValue($r, $whenUpdatedKey, ''), null);
-                if ($whenUpdated && (!$pageMaxDate || $whenUpdated > $pageMaxDate)) {
-                    $pageMaxDate = $whenUpdated;
+                    if ($attempts >= self::MAX_RECORD_ATTEMPTS) {
+                        // Poison record — stop blocking the whole resource on it.
+                        Log::critical("{$logPrefix} Record {$id} permanently failing after {$attempts} attempts; advancing cursor past it. Dead-letter row kept for manual review.");
+                        if (!$blocked) {
+                            $checkpointId = max($checkpointId, $id);
+                            $checkpointDate = $this->maxDate($checkpointDate, $whenUpdated);
+                        }
+                    } else {
+                        // Hold the checkpoint at the last good record so this one
+                        // (and everything after it) is re-fetched next run.
+                        $blocked = true;
+                    }
                 }
             }
 
-            // Save progress after each batch
-            $state->last_synced_id = $lastId;
-            if ($pageMaxDate) {
-                $state->last_sync_at = Carbon::parse($pageMaxDate);
+            // Persist only the SAFE checkpoint after each batch.
+            $state->last_synced_id = $checkpointId;
+            if ($checkpointDate) {
+                $state->last_sync_at = $checkpointDate;
             }
             $state->save();
 
             // Check time limit
             if ((microtime(true) - $startTime) > $maxTime) {
-                Log::info("{$logPrefix} Time limit ({$maxTime}s) reached after {$totalProcessed} records, last ID {$lastId}. Will continue next run.");
-                return ['status' => 'partial', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $lastId];
+                Log::info("{$logPrefix} Time limit ({$maxTime}s) reached after {$totalProcessed} records, checkpoint ID {$checkpointId}. Will continue next run.");
+                return ['status' => 'partial', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $checkpointId];
             }
 
         } while ($itemCount >= $pageSize);
 
-        // Full sync complete
+        if ($blocked) {
+            // We scanned the whole table but at least one record still has an
+            // unresolved hole — do NOT flip to incremental yet, or that record
+            // could be skipped. Resume full sync from the checkpoint next run.
+            Log::warning("{$logPrefix} Full scan finished with unresolved failures; staying in full mode (checkpoint ID {$checkpointId}).");
+            return ['status' => 'full_sync_blocked', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $checkpointId];
+        }
+
+        // Full sync complete — every record up to here saved cleanly.
         $state->is_full_synced = true;
         $state->full_sync_completed_at = now();
         $state->cursor = null;
         $state->save();
-        Log::info("{$logPrefix} Full sync completed! Total processed: {$totalProcessed}, failed: {$totalFailed}, last ID: {$lastId}");
+        Log::info("{$logPrefix} Full sync completed! Total processed: {$totalProcessed}, failed: {$totalFailed}, checkpoint ID: {$checkpointId}");
 
-        return ['status' => 'full_sync_complete', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $lastId];
+        return ['status' => 'full_sync_complete', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $checkpointId];
     }
 
     /**
@@ -287,7 +327,15 @@ class CrmSyncService
         $totalFetched = 0;
         $totalProcessed = 0;
         $totalFailed = 0;
-        $pageMaxDate = null;
+
+        // Records arrive ordered by WhenUpdated ASC. $checkpointDate is the
+        // highest date of the contiguous prefix of records that saved cleanly;
+        // we never advance last_sync_at past a record that failed, so it is
+        // re-queried (updatedSince) and retried next run instead of being lost.
+        $checkpointDate = $state->last_sync_at; // Carbon|null, only moves forward
+        $blocked = false;
+
+        $openFailures = $this->loadOpenFailureIds($config);
 
         $pageSizeParam = $config['pageSizeParam'] ?? 'pageSize';
 
@@ -320,39 +368,53 @@ class CrmSyncService
                 $id = (int)$this->recordValue($r, [$apiPrimaryKey, $primaryKey], 0);
                 if (!$id) continue;
 
+                $whenUpdated = $this->validateDate($this->recordValue($r, $whenUpdatedKey, ''), null);
+
                 if (isset($config['skipIf']) && ($config['skipIf'])($r)) {
                     Log::debug("{$logPrefix} Skipping record ID {$id} (skipIf matched)");
+                    if (!$blocked) {
+                        $checkpointDate = $this->maxDate($checkpointDate, $whenUpdated);
+                    }
                     continue;
                 }
 
                 try {
-                    $fields = $this->sanitizeRecord($fieldMap($this->normalizeIncomingRecord($r, $config)));
-                    $this->assertRequiredFields($fields, $config);
-                    $fields = $this->withoutPrimaryKeyAliases($fields, $config);
-                    $model = $modelClass::updateOrCreate(
-                        [$primaryKey => $id],
-                        $fields
-                    );
+                    $this->upsertRecord($modelClass, $primaryKey, $id, $r, $config, $fieldMap);
+                    $totalProcessed++;
 
-                    if (isset($config['afterSave'])) {
-                        ($config['afterSave'])($r, $model);
+                    if (isset($openFailures[(string)$id])) {
+                        $this->markFailureResolved($config, $id);
+                        unset($openFailures[(string)$id]);
                     }
 
-                    $totalProcessed++;
+                    if (!$blocked) {
+                        $checkpointDate = $this->maxDate($checkpointDate, $whenUpdated);
+                    }
                 } catch (\Throwable $e) {
                     $totalFailed++;
-                    $this->logRecordFailure($runLog, $config, $id, null, null, $e->getMessage(), $r);
-                    Log::error("{$logPrefix} Record {$id} failed, continuing sync: " . $e->getMessage(), [
+                    $openFailures[(string)$id] = true;
+                    $attempts = $this->recordFailure($runLog, $config, $id, $e->getMessage(), $r);
+                    Log::error("{$logPrefix} Record {$id} failed (attempt {$attempts}): " . $e->getMessage(), [
                         'record_id' => $id,
-                        'record' => $r,
                         'exception' => $e,
                     ]);
-                }
 
-                $whenUpdated = $this->validateDate($this->recordValue($r, $whenUpdatedKey, ''), null);
-                if ($whenUpdated && (!$pageMaxDate || $whenUpdated > $pageMaxDate)) {
-                    $pageMaxDate = $whenUpdated;
+                    if ($attempts >= self::MAX_RECORD_ATTEMPTS) {
+                        Log::critical("{$logPrefix} Record {$id} permanently failing after {$attempts} attempts; advancing cursor past it. Dead-letter row kept for manual review.");
+                        if (!$blocked) {
+                            $checkpointDate = $this->maxDate($checkpointDate, $whenUpdated);
+                        }
+                    } else {
+                        $blocked = true;
+                    }
                 }
+            }
+
+            // Persist the safe checkpoint after each page so progress survives
+            // a crash or the time-limit cutoff below.
+            if ($checkpointDate) {
+                $state->last_sync_at = $checkpointDate;
+                $state->save();
             }
 
             $page++;
@@ -365,12 +427,7 @@ class CrmSyncService
 
         } while ($itemCount >= $pageSize);
 
-        if ($pageMaxDate) {
-            $state->last_sync_at = Carbon::parse($pageMaxDate);
-            $state->save();
-        }
-
-        Log::info("{$logPrefix} Incremental sync done. Processed: {$totalProcessed}, failed: {$totalFailed}");
+        Log::info("{$logPrefix} Incremental sync done. Processed: {$totalProcessed}, failed: {$totalFailed}" . ($blocked ? ' (with held checkpoint — failures will retry next run)' : ''));
         return ['status' => 'incremental_complete', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed];
     }
 
@@ -581,21 +638,135 @@ class CrmSyncService
         }
     }
 
-    private function logRecordFailure(?SyncRunLog $runLog, array $config, $id, ?string $field, $originalValue, string $error, array $payload): void
+    /**
+     * Upsert a single CRM record into the local table, atomically together with
+     * any afterSave side effects, so a half-applied record never persists.
+     */
+    private function upsertRecord(string $modelClass, string $primaryKey, int $id, array $r, array $config, callable $fieldMap): void
+    {
+        DB::transaction(function () use ($modelClass, $primaryKey, $id, $r, $config, $fieldMap) {
+            $fields = $this->sanitizeRecord($fieldMap($this->normalizeIncomingRecord($r, $config)));
+            $this->assertRequiredFields($fields, $config);
+            $fields = $this->withoutPrimaryKeyAliases($fields, $config);
+
+            $model = $modelClass::updateOrCreate(
+                [$primaryKey => $id],
+                $fields
+            );
+
+            if (isset($config['afterSave'])) {
+                ($config['afterSave'])($r, $model);
+            }
+        });
+    }
+
+    /**
+     * Load the set of record IDs that currently have an OPEN (unresolved)
+     * dead-letter entry for this resource. One query per run (dead-letters are
+     * rare) instead of an UPDATE per successful record. Keyed by string id.
+     *
+     * @return array<string,bool>
+     */
+    private function loadOpenFailureIds(array $config): array
     {
         try {
+            return SyncRecordFailure::where('resource', $config['resource'] ?? '')
+                ->whereNull('resolved_at')
+                ->pluck('record_id')
+                ->filter(fn ($v) => $v !== null)
+                ->flip()
+                ->map(fn () => true)
+                ->all();
+        } catch (\Throwable $e) {
+            Log::warning('[SYNC] Could not load open failures: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Record (or update) the dead-letter entry for a record that failed to
+     * upsert. Keeps a single OPEN row per (resource, record_id), incrementing
+     * its attempt counter, and returns the total attempts so the caller can
+     * decide whether to give up on a poison record.
+     */
+    private function recordFailure(?SyncRunLog $runLog, array $config, $id, string $error, array $payload): int
+    {
+        $resource = $config['resource'] ?? '';
+        $recordId = $id !== null ? (string)$id : null;
+
+        try {
+            $existing = SyncRecordFailure::where('resource', $resource)
+                ->where('record_id', $recordId)
+                ->whereNull('resolved_at')
+                ->first();
+
+            if ($existing) {
+                $existing->attempts = (int)$existing->attempts + 1;
+                $existing->error_message = $error;
+                $existing->payload = $payload;
+                if ($runLog) {
+                    $existing->sync_run_log_id = $runLog->id;
+                }
+                $existing->save();
+
+                return (int)$existing->attempts;
+            }
+
             SyncRecordFailure::create([
                 'sync_run_log_id' => $runLog ? $runLog->id : null,
-                'resource' => $config['resource'] ?? '',
-                'record_id' => $id !== null ? (string)$id : null,
-                'field' => $field,
-                'original_value' => $originalValue !== null ? (string)$originalValue : null,
+                'resource' => $resource,
+                'record_id' => $recordId,
                 'error_message' => $error,
                 'payload' => $payload,
+                'attempts' => 1,
             ]);
+
+            return 1;
         } catch (\Throwable $e) {
             Log::warning('[SYNC] Failed to persist record failure: ' . $e->getMessage());
+            // If we cannot even track the failure, report a single attempt so we
+            // do NOT prematurely give up and skip the record.
+            return 1;
         }
+    }
+
+    /**
+     * Mark any open dead-letter entry for this record as resolved — it just
+     * synced successfully on retry.
+     */
+    private function markFailureResolved(array $config, $id): void
+    {
+        try {
+            SyncRecordFailure::where('resource', $config['resource'] ?? '')
+                ->where('record_id', $id !== null ? (string)$id : null)
+                ->whereNull('resolved_at')
+                ->update(['resolved_at' => now()]);
+        } catch (\Throwable $e) {
+            Log::warning('[SYNC] Failed to resolve record failure: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Return the later of an existing Carbon checkpoint and a new date string,
+     * never moving the checkpoint backwards. $newDate may be null/invalid.
+     */
+    private function maxDate(?Carbon $current, $newDate): ?Carbon
+    {
+        if (empty($newDate)) {
+            return $current;
+        }
+
+        try {
+            $candidate = Carbon::parse($newDate);
+        } catch (\Throwable $e) {
+            return $current;
+        }
+
+        if (!$current || $candidate->greaterThan($current)) {
+            return $candidate;
+        }
+
+        return $current;
     }
 
     private function tableHasColumn(string $table, string $column): bool

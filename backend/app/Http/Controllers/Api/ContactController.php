@@ -212,14 +212,22 @@ class ContactController extends Controller
             fn ($id) => (int) $id !== $senderId && (int) $id > 0
         )));
 
-        $senderName = $this->userNames([$senderId])[$senderId] ?? 'Użytkownik';
+        $names = $this->userNames([$senderId, $participantId, $instructorId]);
+        $senderName = $names[$senderId] ?? 'Użytkownik';
         $isInstructorSender = $senderRole === 'instructor';
         $title = $isInstructorSender ? 'Wiadomość od instruktora' : "Nowa wiadomość: {$senderName}";
         $category = $isInstructorSender ? 'instructor' : 'message';
 
+        // Deep-link do wątku — pozwala otworzyć rozmowę (z polem pisania)
+        // prosto z powiadomienia. Format obsługuje aplikacja Flutter.
+        $deepLink = 'edschat://open?p=' . $participantId
+            . '&i=' . $instructorId
+            . '&pn=' . rawurlencode($names[$participantId] ?? '')
+            . '&in=' . rawurlencode($names[$instructorId] ?? '');
+
         foreach ($recipients as $uid) {
             try {
-                $this->push->sendToUser((int) $uid, $title, mb_strimwidth($text, 0, 120, '…'), $category);
+                $this->push->sendToUser((int) $uid, $title, mb_strimwidth($text, 0, 120, '…'), $category, $deepLink);
             } catch (\Throwable $e) {
                 // pojedyncza wysyłka nie blokuje reszty
             }

@@ -172,6 +172,110 @@ class OtpController
     }
 
     // ─────────────────────────────────────────────
+    // 2a. Request OTP for REGISTRATION — POST /register/send-otp
+    // ─────────────────────────────────────────────
+
+    /**
+     * Generate and send an OTP for the registration flow. Unlike requestOtp(),
+     * this does NOT short-circuit for unknown phones — a registering user does
+     * not exist yet, so the code must be sent regardless. Still rate-limited
+     * (max 3 / 15 min per phone).
+     */
+    public function requestOtpForRegistration(Request $request, SerwerSmsClient $sms)
+    {
+        $request->validate([
+            'phone' => 'required|string|max:25',
+        ]);
+
+        $phone = $this->normalizePhone($request->string('phone'));
+
+        // Rate limit: max 3 OTP per phone in last 15 minutes
+        $recentCount = OtpRequest::where('phone', $phone)
+            ->where('created_at', '>', now()->subMinutes(15))
+            ->count();
+
+        if ($recentCount >= 3) {
+            return response()->json([
+                'ok'    => false,
+                'error' => 'TOO_MANY_REQUESTS',
+            ], 429);
+        }
+
+        $code = (string) random_int(100000, 999999);
+
+        $otp = OtpRequest::create([
+            'phone'      => $phone,
+            'code_hash'  => bcrypt($code),
+            'expires_at' => now()->addMinutes(5),
+            'attempts'   => 0,
+        ]);
+
+        $appHash = config('services.sms.app_hash', '');
+
+        $msg = "<#> Kod rejestracji: {$code}. Wazny 5 min.\n{$appHash}";
+
+        $res = $sms->sendOtp($phone, $msg, (bool) config('services.sms.test_mode', false));
+
+        $messageId = $res['data']['items'][0]['id'] ?? null;
+        if ($messageId) {
+            $otp->update(['sent_message_id' => $messageId]);
+        }
+
+        Log::info('Registration OTP sent', [
+            'phone_suffix' => substr($phone, -3),
+            'sms_ok'       => $res['ok'],
+            'message_id'   => $messageId,
+        ]);
+
+        return response()->json(['ok' => true]);
+    }
+
+    // ─────────────────────────────────────────────
+    // 2b. Verify OTP for REGISTRATION — POST /register/verify-otp
+    // ─────────────────────────────────────────────
+
+    /**
+     * Verify an OTP code in the registration flow (new account, user does
+     * not exist yet). Unlike verifyOtp(), this does NOT require an existing
+     * user and does NOT consume/invalidate the OTP — the authoritative
+     * verification and one-time invalidation happen later in
+     * AuthController::register(). Returns {ok:true} on success so the wizard
+     * can give instant feedback before the personal-data step.
+     */
+    public function verifyForRegistration(Request $request)
+    {
+        $request->validate([
+            'phone' => 'required|string|max:25',
+            'code'  => 'required|string|size:6',
+        ]);
+
+        $phone = $this->normalizePhone($request->string('phone'));
+        $code  = (string) $request->string('code');
+
+        $otp = OtpRequest::where('phone', $phone)
+            ->where('expires_at', '>', now())
+            ->latest()
+            ->first();
+
+        if (!$otp) {
+            return response()->json(['ok' => false, 'error' => 'INVALID_CODE'], 422);
+        }
+
+        if ($otp->attempts >= 5) {
+            return response()->json(['ok' => false, 'error' => 'TOO_MANY_ATTEMPTS'], 429);
+        }
+
+        // Only count failures against the attempt budget so a correct code at
+        // this preview step leaves room for register()'s own verification.
+        if (!Hash::check($code, $otp->code_hash)) {
+            $otp->increment('attempts');
+            return response()->json(['ok' => false, 'error' => 'INVALID_CODE'], 422);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
+    // ─────────────────────────────────────────────
     // 3. SMS Login — list accounts linked to phone
     //    POST /sms/login/verify
     // ─────────────────────────────────────────────

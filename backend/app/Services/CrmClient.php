@@ -11,12 +11,21 @@ class CrmClient
 
     private function httpClient(string $token)
     {
-        return Http::baseUrl(config('services.crm.base_url'))
+        $client = Http::baseUrl(config('services.crm.base_url'))
             ->withToken($token)
             ->withOptions([
                 'verify' => (bool) config('services.crm.verify_tls', true),
             ])
             ->timeout(20);
+
+        // Shared secret that authorizes the mobile-sync endpoints on the CRM
+        // side (in addition to the JWT). Without it the CRM rejects the call.
+        $syncToken = config('services.crm.mobile_sync_token');
+        if (!empty($syncToken)) {
+            $client = $client->withHeaders(['X-Mobile-Sync-Token' => $syncToken]);
+        }
+
+        return $client;
     }
 
     public function get(string $url, array $query = [])

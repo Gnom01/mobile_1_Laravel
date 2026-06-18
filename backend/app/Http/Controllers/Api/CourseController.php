@@ -24,6 +24,7 @@ class CourseController extends Controller
     {
         $query = Course::query()
             ->where('websiteStatusesDVID', '!=', 0)
+            ->where('cancelled', 0)
             ->with('prices');
 
         if ($request->filled('localizationID')) {

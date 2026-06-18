@@ -13,7 +13,7 @@ class CampController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Camp::query()->where('website_status_id', '!=', 0);
+        $query = Camp::query()->where('website_status_id', '!=', 0)->where('cancelled', 0);
         $this->applyFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();

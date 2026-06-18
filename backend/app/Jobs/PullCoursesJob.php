@@ -39,6 +39,7 @@ class PullCoursesJob implements ShouldQueue
                     'frequency'                   => (string)($r['Frequency'] ?? ''),
                     'websiteStatusesDVID'         => (int)($r['websiteStatusesDVID'] ?? 0),
                     'websiteStatusesName'         => (string)($r['websiteStatusesName'] ?? ''),
+                    'cancelled'                   => (int)($r['cancelled'] ?? 0),
                     'courseAgeRangesDVID'         => (int)($r['courseAgeRangesDVID'] ?? 0),
                     'courseAgeRanges'             => (string)($r['courseAgeRanges'] ?? ''),
                     'mainCategoryDID'             => (int)($r['mainCategoryDID'] ?? 0),

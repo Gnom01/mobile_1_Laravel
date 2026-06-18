@@ -38,6 +38,9 @@ return [
     'crm' => [
         'base_url' => env('CRM_BASE_URL'),
         'push_api_token' => env('CRM_PUSH_API_TOKEN'),
+        // Shared secret sent on every /CrmToMobileSync/* call so a random
+        // authenticated app user (valid JWT, no secret) cannot pull the data.
+        'mobile_sync_token' => env('CRM_MOBILE_SYNC_TOKEN'),
         'login_endpoint' => env('CRM_LOGIN_ENDPOINT', '/auth/login'),
         'refresh_endpoint' => env('CRM_REFRESH_ENDPOINT', '/auth/refresh'),
         'username' => env('CRM_USERNAME'),

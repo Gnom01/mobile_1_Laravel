@@ -25,6 +25,7 @@ class WorkshopController extends Controller
     {
         $query = WorkshopYgm::query()
             ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
             ->whereDate('ends_at', '>=', now()->toDateString());
         $this->withProductsLevel3Category($query);
         $this->applyCommonFilters($query, $request);
@@ -86,6 +87,7 @@ class WorkshopController extends Controller
     {
         $query = WorkshopEuropean::query()
             ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
             ->whereDate('ends_at', '>=', now()->toDateString());
         $this->withProductsLevel3Category($query);
         $this->applyCommonFilters($query, $request);

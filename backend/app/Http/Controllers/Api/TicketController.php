@@ -13,7 +13,7 @@ class TicketController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Ticket::query()->where('website_status_id', '!=', 0);
+        $query = Ticket::query()->where('website_status_id', '!=', 0)->where('cancelled', 0);
         $this->applyFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();

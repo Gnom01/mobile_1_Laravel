@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\PasswordResetController;
 // ───────────────────────────────────────────────
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
+Route::post('/register/send-otp', [OtpController::class, 'requestOtpForRegistration']);
+Route::post('/register/verify-otp', [OtpController::class, 'verifyForRegistration']);
 Route::post('/sms/send', [OtpController::class, 'requestOtp']);
 Route::post('/sms/verify', [OtpController::class, 'verifyOtp']);
 Route::post('/sms/login/send', [OtpController::class, 'requestOtp']);

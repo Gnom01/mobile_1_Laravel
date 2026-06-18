@@ -15,59 +15,28 @@ Log::info('[CONSOLE.PHP] routes/console.php loaded - registering CRM schedules')
 
 Schedule::useCache('file');
 
-$crmSyncJobs = [
-    'PullClientsJob',
-    'PullUsersJob',
-    'PullPaymentsJob',
-    'PullPaymentsRealJob',
-    'PullPaymentsItemsJob',
-    'PullLocalizationsJob',
-    'PullContractsJob',
-    'PullUsersRelationsJob',
-    'PullDictionariesJob',
-    'PullProductsJob',
-    'PullCoursesJob',
-    'PullEmployeesJob',
-    'PullPriceListsTemplatesPositionsJob',
-    'PullPriceListsTemplatesJob',
-    'PullPriceListsTemplatesPositionsDimensionsJob',
-    'PullProductsDimensionsJob',
-    'PullCoursesHeadingsDimensionsJob',
-    'PullSeasonsJob',
-    'PullXSchedulesJob',
-    'PullDaysJob',
-    'PullDaysOffJob',
-    'PullProductsPaymentInstallmentsJob',
-    'PullCoursesHeadingsJob',
-    'PullSchedulesEventsSettlementsJob',
-    'PullUsersSchedulesJob',
-    'PullUsersTicketsJob',
-    'PullUserWorkshopsGroupsJob',
-    'PullUsersProductsJob',
-    'PullWorkshopsYgmJob',
-    'PullWorkshopsEuropeanJob',
-    'PullCampsJob',
-    'PullDayCampsJob',
-    'PullTicketsJob',
-];
-
-foreach ($crmSyncJobs as $jobName) {
-    $logName = strtolower(preg_replace('/(?<!^)[A-Z]/', '-$0', str_replace('Job', '', str_replace('Pull', '', $jobName))));
-
-    Schedule::command("crm:sync {$jobName}")
-        ->everyFiveMinutes()
-        ->withoutOverlapping(10)
-        ->appendOutputTo(storage_path("logs/crm-sync-{$logName}.log"))
-        ->before(function () use ($jobName) {
-            Log::info("[SCHEDULER] crm:sync {$jobName} is about to start");
-        })
-        ->after(function () use ($jobName) {
-            Log::info("[SCHEDULER] crm:sync {$jobName} has finished");
-        })
-        ->onFailure(function () use ($jobName) {
-            Log::error("[SCHEDULER] crm:sync {$jobName} failed");
-        });
-}
+// Pojedynczy, SEKWENCYJNY przebieg synchronizacji co 5 minut.
+// `crm:sync` (bez argumentu) uruchamia wszystkie joby Pull* po kolei, w
+// kolejności zależności (Clients → Users → Payments → ...), w jednym procesie.
+// Wcześniej rejestrowaliśmy 33 osobne wpisy `crm:sync {Job}`, które odpalały się
+// JEDNOCZEŚNIE co 5 min — 33 równoległe połączenia do CRM/DB, brak respektowania
+// kolejności (sieroty: płatności bez userów) i lock per-komenda nie ograniczał
+// równoległości. Serializacja eliminuje thundering herd i porządkuje zależności.
+// withoutOverlapping(30): jeśli przebieg trwa > 5 min, kolejny zostanie pominięty,
+// a lock i tak wygaśnie po 30 min (zabezpieczenie przed zakleszczeniem).
+Schedule::command('crm:sync')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(30)
+    ->appendOutputTo(storage_path('logs/crm-sync.log'))
+    ->before(function () {
+        Log::info('[SCHEDULER] crm:sync (all resources, sequential) is about to start');
+    })
+    ->after(function () {
+        Log::info('[SCHEDULER] crm:sync (all resources, sequential) has finished');
+    })
+    ->onFailure(function () {
+        Log::error('[SCHEDULER] crm:sync (all resources, sequential) failed');
+    });
 
 Schedule::call(function () {
     PushNotification::query()

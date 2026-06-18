@@ -46,6 +46,7 @@ class PullWorkshopsYgmJob implements ShouldQueue
                     'offer_type'          => 'workshop_ygm',
                     'website_status_id'   => $int($r['websiteStatusesDVID']   ?? null),
                     'is_closed'           => $int($r['isClosed']              ?? null),
+                    'cancelled'           => (int)($r['cancelled']            ?? 0),
                     'starts_at'           => $syncService->validateDate($r['startingDate']    ?? '', null),
                     'ends_at'             => $syncService->validateDate($r['closingDate']     ?? '', null),
                     'localization_id'     => $int($r['localizationsID']       ?? null),

@@ -36,6 +36,7 @@ class PullCampsJob implements ShouldQueue
                     'offer_type'          => 'camp',
                     'website_status_id'   => (int)    ($r['websiteStatusesDVID']   ?? 0),
                     'is_closed'           => (int)    ($r['isClosed']              ?? 0),
+                    'cancelled'           => (int)    ($r['cancelled']             ?? 0),
                     'starts_at'           => $syncService->validateDate($r['startingDate']     ?? '', null),
                     'ends_at'             => $syncService->validateDate($r['closingDate']      ?? '', null),
                     'localization_id'     => (int)    ($r['localizationsID']        ?? 0),
