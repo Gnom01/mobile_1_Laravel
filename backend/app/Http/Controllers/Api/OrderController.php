@@ -30,6 +30,15 @@ class OrderController extends Controller
      */
     public function store(CreateOrderRequest $request): JsonResponse
     {
+        // Zapis robi kilka sekwencyjnych round-tripów do CRM (createOrder →
+        // harmonogram rat → inicjacja płatności) + sync zwrotny. Domyślne
+        // max_execution_time (30s) bywa za krótkie i ZABIJA skrypt już PO
+        // sukcesie w CRM, zanim zwróci payment_url — w aplikacji objawia się to
+        // wiecznym kręcącym się kółkiem (klient nie dostaje żadnej odpowiedzi).
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(180);
+        }
+
         try {
             $data = CreateOrderData::fromArray(
                 $request->all(),
