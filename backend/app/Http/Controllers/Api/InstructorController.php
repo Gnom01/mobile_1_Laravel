@@ -4,7 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
+use App\Models\InstructorAnnouncement;
+use App\Models\InstructorReport;
+use App\Models\InstructorScheduleChange;
 use App\Services\FirebasePushService;
+use App\Support\SchoolManagerResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -169,6 +173,463 @@ class InstructorController extends Controller
         ]);
     }
 
+    /**
+     * GET /api/instructor/schedule?from=YYYY-MM-DD&to=YYYY-MM-DD
+     * Harmonogram instruktora z `scheduleseventssettlements` wg jego grup
+     * (coursesHeadings). Domyślnie najbliższe 14 dni.
+     */
+    public function schedule(Request $request): JsonResponse
+    {
+        $employeeIds = $this->employeeIds($request);
+        if (empty($employeeIds)) {
+            return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'from'    => ['nullable', 'date_format:Y-m-d'],
+            'to'      => ['nullable', 'date_format:Y-m-d'],
+            'groupId' => ['nullable', 'integer'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Nieprawidłowe dane.', 'errors' => $validator->errors()], 422);
+        }
+
+        $from = $request->input('from') ?: now()->format('Y-m-d');
+        $to   = $request->input('to') ?: now()->addDays(14)->format('Y-m-d');
+
+        $groupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')
+            ->map(fn ($v) => (int) $v)->all();
+        if (empty($groupIds)) {
+            return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
+        }
+
+        // Opcjonalne zawężenie do jednej grupy (jeśli należy do instruktora).
+        if ($request->filled('groupId')) {
+            $gid = (int) $request->input('groupId');
+            if (!in_array($gid, $groupIds, true)) {
+                return response()->json(['message' => 'Brak dostępu do tej grupy.'], 403);
+            }
+            $groupIds = [$gid];
+        }
+
+        $ghPlaceholders = implode(',', array_fill(0, count($groupIds), '?'));
+
+        $rows = DB::select(
+            "
+            SELECT
+                ses.schedulesEventsSettlementsID,
+                ses.schedulesID,
+                ses.coursesHeadingsID,
+                ses.eventDate,
+                ses.timeFrom,
+                ses.timeTo,
+                ses.sheduleItemTypeDVID,
+                ses.eventsSettlementsStatusesDVID,
+                COALESCE(course.courseHeadingName, ch.CourseHeadingName, xs.groupname, '') AS title,
+                COALESCE(xs.groupname, course.courseHeadingName, ch.CourseHeadingName, '') AS groupName,
+                COALESCE(l.LocalizationName, course.localizationName, xs.location, '') AS locationName,
+                COALESCE(xs.instructors, course.instructorsList, '') AS instructors
+            FROM scheduleseventssettlements ses
+            LEFT JOIN xschedules xs
+                ON xs.id = ses.schedulesID
+            LEFT JOIN courses course
+                ON course.coursesHeadingsID = ses.coursesHeadingsID
+            LEFT JOIN coursesheadings ch
+                ON ch.CoursesHeadingsID = ses.coursesHeadingsID
+                AND ch.Cancelled = 0
+            LEFT JOIN localizations l
+                ON l.LocalizationsID = ses.localizationsID
+                AND l.Cancelled = 0
+            WHERE ses.cancelled = 0
+                AND ses.coursesHeadingsID IN ($ghPlaceholders)
+                AND ses.eventDate >= ?
+                AND ses.eventDate <= ?
+            ORDER BY ses.eventDate ASC, ses.timeFrom ASC
+            ",
+            array_merge($groupIds, [$from, $to])
+        );
+
+        $counts = $this->participantCounts($groupIds);
+
+        $body = array_map(function ($row) use ($counts) {
+            return [
+                'id'                => (int) $row->schedulesEventsSettlementsID,
+                'scheduleId'        => (int) $row->schedulesID,
+                'coursesHeadingsID' => (int) $row->coursesHeadingsID,
+                'date'              => $row->eventDate,
+                'timeFrom'          => substr((string) $row->timeFrom, 0, 5),
+                'timeTo'            => substr((string) $row->timeTo, 0, 5),
+                'title'             => (string) $row->title,
+                'groupName'         => (string) $row->groupName,
+                'locationName'      => (string) $row->locationName,
+                'instructors'       => (string) $row->instructors,
+                'itemTypeDVID'      => (int) $row->sheduleItemTypeDVID,
+                'statusDVID'        => (int) $row->eventsSettlementsStatusesDVID,
+                'count'             => (int) ($counts[$row->coursesHeadingsID] ?? 0),
+            ];
+        }, $rows);
+
+        return response()->json([
+            'status'      => '200',
+            'body'        => $body,
+            'recordCount' => count($body),
+            'range'       => ['from' => $from, 'to' => $to],
+        ]);
+    }
+
+    /**
+     * GET /api/instructor/participants
+     * Wszyscy uczestnicy ze wszystkich grup instruktora (do budowy czatu
+     * grupowego). Każdy z listą grup, w których uczestniczy.
+     */
+    public function allParticipants(Request $request): JsonResponse
+    {
+        $employeeIds = $this->employeeIds($request);
+        if (empty($employeeIds)) {
+            return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
+        }
+
+        $groups = $this->instructorGroupsQuery($employeeIds)->get();
+        $groupNameById = [];
+        foreach ($groups as $g) {
+            $groupNameById[(int) $g->coursesHeadingsID] = $g->courseHeadingName;
+        }
+        $groupIds = array_keys($groupNameById);
+        if (empty($groupIds)) {
+            return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
+        }
+
+        // userId => [groupId,...] z obu źródeł zapisów.
+        $map = [];
+        foreach (['usersproducts', 'usersschedules'] as $tbl) {
+            $rows = DB::table($tbl)
+                ->whereIn('coursesheadingsid', $groupIds)
+                ->where('cancelled', 0)
+                ->get(['usersid', 'coursesheadingsid']);
+            foreach ($rows as $r) {
+                $map[(int) $r->usersid][(int) $r->coursesheadingsid] = true;
+            }
+        }
+        if (empty($map)) {
+            return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
+        }
+
+        $users = DB::table('users')
+            ->whereIn('UsersID', array_keys($map))
+            ->where('Cancelled', 0)
+            ->get(['UsersID', 'guid', 'FirstName', 'LastName']);
+
+        $body = $users->map(function ($u) use ($map, $groupNameById) {
+            $gids = array_keys($map[(int) $u->UsersID] ?? []);
+            $groupNames = array_values(array_filter(array_map(
+                fn ($gid) => $groupNameById[$gid] ?? null,
+                $gids
+            )));
+            return [
+                'usersID'    => (int) $u->UsersID,
+                'guid'       => $u->guid,
+                'firstName'  => $u->FirstName,
+                'lastName'   => $u->LastName,
+                'fullName'   => trim(($u->FirstName ?? '') . ' ' . ($u->LastName ?? '')),
+                'groupIds'   => array_values($gids),
+                'groupNames' => $groupNames,
+            ];
+        })
+        ->sortBy('fullName')
+        ->values();
+
+        return response()->json([
+            'status'      => '200',
+            'body'        => $body,
+            'recordCount' => $body->count(),
+        ]);
+    }
+
+    /**
+     * GET /api/instructor/change-types
+     * Słownik typów zmian w harmonogramie (multiselect w kreatorze „+").
+     */
+    public function changeTypes(): JsonResponse
+    {
+        return response()->json([
+            'status' => '200',
+            'body'   => array_values((array) config('instructor.change_types', [])),
+        ]);
+    }
+
+    /**
+     * GET /api/instructor/schedule-changes
+     * Historia zgłoszonych zmian zalogowanego instruktora.
+     */
+    public function scheduleChanges(Request $request): JsonResponse
+    {
+        $instructorUserId = (int) $request->user()->getKey();
+
+        $rows = InstructorScheduleChange::where('instructor_user_id', $instructorUserId)
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get();
+
+        $groupNames = $this->groupNamesMap();
+
+        $body = $rows->map(fn ($r) => $this->mapScheduleChange($r, $groupNames))->values();
+
+        return response()->json(['status' => '200', 'body' => $body, 'recordCount' => $body->count()]);
+    }
+
+    /**
+     * POST /api/instructor/schedule-changes
+     * Body: changeTypes[] (klucze), groupIds[] (coursesHeadingsID), date,
+     *       title?, note?
+     *
+     * Zapisuje zmianę, wysyła push do uczestników wybranych grup oraz do
+     * menadżera(ów) szkoły.
+     */
+    public function storeScheduleChange(Request $request): JsonResponse
+    {
+        $employeeIds = $this->employeeIds($request);
+        if (empty($employeeIds)) {
+            return response()->json(['message' => 'Konto nie jest powiązane z instruktorem.'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'changeTypes'   => ['required', 'array', 'min:1'],
+            'changeTypes.*' => ['string', 'max:40'],
+            'groupIds'      => ['required', 'array', 'min:1'],
+            'groupIds.*'    => ['integer'],
+            'date'          => ['required', 'date_format:Y-m-d'],
+            'title'         => ['nullable', 'string', 'max:160'],
+            'note'          => ['nullable', 'string', 'max:1000'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Nieprawidłowe dane.', 'errors' => $validator->errors()], 422);
+        }
+
+        $data = $validator->validated();
+        $instructorUserId = (int) $request->user()->getKey();
+
+        // Walidacja typów względem słownika.
+        $allowedTypes = array_column((array) config('instructor.change_types', []), 'key');
+        $changeTypes  = array_values(array_intersect($data['changeTypes'], $allowedTypes));
+        if (empty($changeTypes)) {
+            return response()->json(['message' => 'Nieznany typ zmiany.'], 422);
+        }
+
+        // Walidacja przynależności wszystkich grup do instruktora.
+        $ownedGroupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')
+            ->map(fn ($v) => (int) $v)->all();
+        $groupIds = array_values(array_unique(array_map('intval', $data['groupIds'])));
+        $invalid  = array_diff($groupIds, $ownedGroupIds);
+        if (!empty($invalid)) {
+            return response()->json(['message' => 'Brak dostępu do części wybranych grup.'], 403);
+        }
+
+        // Odbiorcy: uczestnicy wszystkich wybranych grup.
+        $recipientIds = [];
+        foreach ($groupIds as $gid) {
+            $recipientIds = array_merge($recipientIds, $this->groupParticipantIds($gid));
+        }
+        $recipientIds = array_values(array_unique(array_filter($recipientIds)));
+
+        // Menadżer(owie) szkoły.
+        $managerIds = SchoolManagerResolver::forGroups($groupIds, [$instructorUserId]);
+
+        $typeLabels = $this->labelsForKeys($changeTypes, 'change_types');
+        $groupNames = $this->groupNamesMap();
+        $groupLabel = $this->namesForIds($groupIds, $groupNames);
+
+        $title = $data['title'] ?? ('Zmiana w harmonogramie: ' . implode(', ', $typeLabels));
+        $dateHuman = $data['date'];
+        $bodyParts = [
+            implode(', ', $typeLabels),
+            'Grupy: ' . $groupLabel,
+            'Data: ' . $dateHuman,
+        ];
+        if (!empty($data['note'])) {
+            $bodyParts[] = $data['note'];
+        }
+        $pushBody = implode("\n", $bodyParts);
+
+        $change = InstructorScheduleChange::create([
+            'instructor_user_id' => $instructorUserId,
+            'change_types'       => $changeTypes,
+            'group_ids'          => $groupIds,
+            'event_date'         => $data['date'],
+            'title'              => $title,
+            'note'               => $data['note'] ?? null,
+            'recipient_count'    => count($recipientIds),
+            'crm_status'         => 'pending',
+        ]);
+
+        // Push do uczestników.
+        $sent = $this->pushMany($recipientIds, $title, $pushBody, 'instructor');
+
+        // Push do menadżera(ów) — z adnotacją od kogo.
+        $instructorName = $this->userName($instructorUserId);
+        $managerTitle = 'Zgłoszona zmiana: ' . $instructorName;
+        $managerSent = $this->pushMany($managerIds, $managerTitle, $pushBody, 'instructor_manager');
+
+        $change->update([
+            'manager_notified_count' => $managerSent,
+        ]);
+
+        return response()->json([
+            'status'           => '200',
+            'message'          => 'Zmiana zapisana i wysłana.',
+            'data'             => $this->mapScheduleChange($change->fresh(), $groupNames),
+            'recipientCount'   => $sent,
+            'managerNotified'  => $managerSent,
+        ], 201);
+    }
+
+    /**
+     * GET /api/instructor/report-types
+     * Słownik typów zgłoszeń.
+     */
+    public function reportTypes(): JsonResponse
+    {
+        return response()->json([
+            'status' => '200',
+            'body'   => array_values((array) config('instructor.report_types', [])),
+        ]);
+    }
+
+    /**
+     * GET /api/instructor/reports
+     * Historia zgłoszeń instruktora.
+     */
+    public function reports(Request $request): JsonResponse
+    {
+        $instructorUserId = (int) $request->user()->getKey();
+
+        $rows = InstructorReport::where('instructor_user_id', $instructorUserId)
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get();
+
+        $groupNames = $this->groupNamesMap();
+        $body = $rows->map(fn ($r) => $this->mapReport($r, $groupNames))->values();
+
+        return response()->json(['status' => '200', 'body' => $body, 'recordCount' => $body->count()]);
+    }
+
+    /**
+     * POST /api/instructor/reports
+     * Body: reportTypes[] (klucze), description, date?, groupIds?[], title?
+     * Powiadamia menadżera szkoły.
+     */
+    public function storeReport(Request $request): JsonResponse
+    {
+        $employeeIds = $this->employeeIds($request);
+        if (empty($employeeIds)) {
+            return response()->json(['message' => 'Konto nie jest powiązane z instruktorem.'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'reportTypes'   => ['required', 'array', 'min:1'],
+            'reportTypes.*' => ['string', 'max:40'],
+            'description'   => ['required', 'string', 'max:2000'],
+            'date'          => ['nullable', 'date_format:Y-m-d'],
+            'title'         => ['nullable', 'string', 'max:160'],
+            'groupIds'      => ['nullable', 'array'],
+            'groupIds.*'    => ['integer'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Nieprawidłowe dane.', 'errors' => $validator->errors()], 422);
+        }
+
+        $data = $validator->validated();
+        $instructorUserId = (int) $request->user()->getKey();
+
+        $allowedTypes = array_column((array) config('instructor.report_types', []), 'key');
+        $reportTypes  = array_values(array_intersect($data['reportTypes'], $allowedTypes));
+        if (empty($reportTypes)) {
+            return response()->json(['message' => 'Nieznany typ zgłoszenia.'], 422);
+        }
+
+        $groupIds = [];
+        if (!empty($data['groupIds'])) {
+            $ownedGroupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')
+                ->map(fn ($v) => (int) $v)->all();
+            $groupIds = array_values(array_unique(array_map('intval', $data['groupIds'])));
+            $invalid  = array_diff($groupIds, $ownedGroupIds);
+            if (!empty($invalid)) {
+                return response()->json(['message' => 'Brak dostępu do części wybranych grup.'], 403);
+            }
+        }
+
+        $typeLabels = $this->labelsForKeys($reportTypes, 'report_types');
+        $groupNames = $this->groupNamesMap();
+
+        $title = $data['title'] ?? ('Zgłoszenie: ' . implode(', ', $typeLabels));
+
+        $report = InstructorReport::create([
+            'instructor_user_id' => $instructorUserId,
+            'report_types'       => $reportTypes,
+            'group_ids'          => $groupIds ?: null,
+            'event_date'         => $data['date'] ?? null,
+            'title'              => $title,
+            'description'        => $data['description'],
+            'status'             => 'new',
+        ]);
+
+        // Powiadom menadżera(ów).
+        $managerIds = SchoolManagerResolver::forGroups($groupIds, [$instructorUserId]);
+        $instructorName = $this->userName($instructorUserId);
+        $managerBody = implode("\n", array_filter([
+            implode(', ', $typeLabels),
+            $data['date'] ?? null ? ('Data: ' . $data['date']) : null,
+            $data['description'],
+        ]));
+        $managerSent = $this->pushMany($managerIds, 'Zgłoszenie: ' . $instructorName, $managerBody, 'instructor_manager');
+
+        $report->update(['manager_notified_count' => $managerSent]);
+
+        return response()->json([
+            'status'          => '200',
+            'message'         => 'Zgłoszenie wysłane.',
+            'data'            => $this->mapReport($report->fresh(), $groupNames),
+            'managerNotified' => $managerSent,
+        ], 201);
+    }
+
+    /**
+     * GET /api/instructor/announcements
+     * Blok ogłoszeń dla instruktora (wydarzenia, zbiórki, szkolenia).
+     */
+    public function announcements(Request $request): JsonResponse
+    {
+        $localizationIds = $this->instructorLocalizationIds($request);
+
+        $rows = InstructorAnnouncement::active()
+            ->where(function ($q) use ($localizationIds) {
+                $q->where('localizations_id', 0);
+                if (!empty($localizationIds)) {
+                    $q->orWhereIn('localizations_id', $localizationIds);
+                }
+            })
+            ->where(function ($q) {
+                $q->whereNull('ends_at')->orWhere('ends_at', '>=', now());
+            })
+            ->orderBy('sort_order')
+            ->orderByRaw('event_at IS NULL')
+            ->orderBy('event_at')
+            ->limit(50)
+            ->get();
+
+        $body = $rows->map(fn ($a) => [
+            'id'        => (int) $a->id,
+            'title'     => $a->title,
+            'body'      => $a->body,
+            'kind'      => $a->kind,
+            'eventAt'   => optional($a->event_at)->toIso8601String(),
+            'startsAt'  => optional($a->starts_at)->toIso8601String(),
+            'endsAt'    => optional($a->ends_at)->toIso8601String(),
+        ])->values();
+
+        return response()->json(['status' => '200', 'body' => $body, 'recordCount' => $body->count()]);
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────────────────
 
     /** EmployeesID powiązane z zalogowanym użytkownikiem (instruktorem). */
@@ -275,5 +736,123 @@ class InstructorController extends Controller
             ->where('usersid', $participantUserId)
             ->where('cancelled', 0)
             ->exists();
+    }
+
+    /** Mapa coursesHeadingsID => nazwa grupy (dla zalogowanego instruktora i ogólnie). */
+    private function groupNamesMap(): array
+    {
+        return DB::table('courses')
+            ->pluck('courseHeadingName', 'coursesHeadingsID')
+            ->map(fn ($v) => (string) $v)
+            ->all();
+    }
+
+    /** "Nazwa A, Nazwa B (+2)" dla listy ID grup. */
+    private function namesForIds(array $groupIds, array $groupNames): string
+    {
+        $names = [];
+        foreach ($groupIds as $gid) {
+            $names[] = $groupNames[$gid] ?? ('#' . $gid);
+        }
+        if (count($names) <= 3) {
+            return implode(', ', $names);
+        }
+        $head = array_slice($names, 0, 3);
+        return implode(', ', $head) . ' (+' . (count($names) - 3) . ')';
+    }
+
+    /** Etykiety dla kluczy słownika z config('instructor.*'). */
+    private function labelsForKeys(array $keys, string $dictionary): array
+    {
+        $dict = (array) config('instructor.' . $dictionary, []);
+        $byKey = [];
+        foreach ($dict as $row) {
+            $byKey[$row['key']] = $row['label'];
+        }
+        return array_values(array_map(fn ($k) => $byKey[$k] ?? $k, $keys));
+    }
+
+    /** Wysyła push do listy UsersID, zwraca liczbę udanych. */
+    private function pushMany(array $userIds, string $title, string $body, string $category): int
+    {
+        $sent = 0;
+        foreach (array_values(array_unique(array_filter($userIds))) as $uid) {
+            try {
+                $this->push->sendToUser((int) $uid, $title, $body, $category);
+                $sent++;
+            } catch (\Throwable $e) {
+                // pojedynczy błąd nie przerywa wysyłki
+            }
+        }
+        return $sent;
+    }
+
+    private function userName(int $userId): string
+    {
+        $u = DB::table('users')->where('UsersID', $userId)->first(['FirstName', 'LastName']);
+        if (!$u) {
+            return 'Instruktor';
+        }
+        $name = trim(($u->FirstName ?? '') . ' ' . ($u->LastName ?? ''));
+        return $name !== '' ? $name : 'Instruktor';
+    }
+
+    /** Lokalizacje (szkoły) instruktora — z jego rekordów employees i grup. */
+    private function instructorLocalizationIds(Request $request): array
+    {
+        $employeeIds = $this->employeeIds($request);
+        if (empty($employeeIds)) {
+            return [];
+        }
+
+        $fromEmployees = DB::table('employees')
+            ->whereIn('EmployeesID', $employeeIds)
+            ->where('LocalizationsID', '>', 0)
+            ->pluck('LocalizationsID')->map(fn ($v) => (int) $v)->all();
+
+        $groupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')->all();
+        $fromCourses = empty($groupIds) ? [] : DB::table('courses')
+            ->whereIn('coursesHeadingsID', $groupIds)
+            ->where('localizationsID', '>', 0)
+            ->pluck('localizationsID')->map(fn ($v) => (int) $v)->all();
+
+        return array_values(array_unique(array_merge($fromEmployees, $fromCourses)));
+    }
+
+    private function mapScheduleChange(InstructorScheduleChange $r, array $groupNames): array
+    {
+        $groupIds = (array) $r->group_ids;
+        return [
+            'id'              => (int) $r->id,
+            'changeTypes'     => (array) $r->change_types,
+            'changeLabels'    => $this->labelsForKeys((array) $r->change_types, 'change_types'),
+            'groupIds'        => array_map('intval', $groupIds),
+            'groupLabel'      => $this->namesForIds(array_map('intval', $groupIds), $groupNames),
+            'date'            => optional($r->event_date)->format('Y-m-d'),
+            'title'           => $r->title,
+            'note'            => $r->note,
+            'recipientCount'  => (int) $r->recipient_count,
+            'managerNotified' => (int) $r->manager_notified_count,
+            'crmStatus'       => $r->crm_status,
+            'createdAt'       => optional($r->created_at)->toIso8601String(),
+        ];
+    }
+
+    private function mapReport(InstructorReport $r, array $groupNames): array
+    {
+        $groupIds = (array) ($r->group_ids ?? []);
+        return [
+            'id'              => (int) $r->id,
+            'reportTypes'     => (array) $r->report_types,
+            'reportLabels'    => $this->labelsForKeys((array) $r->report_types, 'report_types'),
+            'groupIds'        => array_map('intval', $groupIds),
+            'groupLabel'      => $this->namesForIds(array_map('intval', $groupIds), $groupNames),
+            'date'            => optional($r->event_date)->format('Y-m-d'),
+            'title'           => $r->title,
+            'description'     => $r->description,
+            'status'          => $r->status,
+            'managerNotified' => (int) $r->manager_notified_count,
+            'createdAt'       => optional($r->created_at)->toIso8601String(),
+        ];
     }
 }

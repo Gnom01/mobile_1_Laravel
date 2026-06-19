@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\TicketController;
 use App\Http\Controllers\Api\MobilePushController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\InstructorController;
+use App\Http\Controllers\Api\InstructorChatController;
 use App\Http\Controllers\Api\ContactController;
 
 // ───────────────────────────────────────────────
@@ -88,7 +89,30 @@ Route::middleware('auth:sanctum')->group(function () {
     // Instructor (grupy + komunikaty push)
     Route::get('/instructor/groups', [InstructorController::class, 'groups']);
     Route::get('/instructor/groups/{groupId}/participants', [InstructorController::class, 'participants']);
+    Route::get('/instructor/participants', [InstructorController::class, 'allParticipants']);
     Route::post('/instructor/messages', [InstructorController::class, 'sendMessage']);
+
+    // Instructor — harmonogram
+    Route::get('/instructor/schedule', [InstructorController::class, 'schedule']);
+
+    // Instructor — zmiany w harmonogramie (multiselect typ + grupy + data)
+    Route::get('/instructor/change-types', [InstructorController::class, 'changeTypes']);
+    Route::get('/instructor/schedule-changes', [InstructorController::class, 'scheduleChanges']);
+    Route::post('/instructor/schedule-changes', [InstructorController::class, 'storeScheduleChange']);
+
+    // Instructor — zgłoszenia
+    Route::get('/instructor/report-types', [InstructorController::class, 'reportTypes']);
+    Route::get('/instructor/reports', [InstructorController::class, 'reports']);
+    Route::post('/instructor/reports', [InstructorController::class, 'storeReport']);
+
+    // Instructor — ogłoszenia (blok na pulpicie)
+    Route::get('/instructor/announcements', [InstructorController::class, 'announcements']);
+
+    // Instructor — czaty grupowe (multiselect uczestników, nazwany czat)
+    Route::get('/instructor/chats', [InstructorChatController::class, 'index']);
+    Route::post('/instructor/chats', [InstructorChatController::class, 'store']);
+    Route::get('/instructor/chats/{chatId}/messages', [InstructorChatController::class, 'messages']);
+    Route::post('/instructor/chats/{chatId}/messages', [InstructorChatController::class, 'send']);
 
     // Kontakt / czat uczestnik ↔ instruktor (z dostępem rodzica do wątków dzieci)
     Route::get('/contact/participants', [ContactController::class, 'participants']);
