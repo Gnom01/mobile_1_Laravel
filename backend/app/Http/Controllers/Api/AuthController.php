@@ -352,7 +352,7 @@ class AuthController
     /**
      * Get the user's consents (permissions).
      */
-    public function consents(Request $request)
+    public function consents(Request $request, \App\Services\CrmClient $crmClient)
     {
         $authUser = $request->user();
         $guid = $request->input('guid');
@@ -391,12 +391,51 @@ class AuthController
             $user = $target;
         }
 
+        // ── Zapis zgód (POST/PUT) ─────────────────────────────────────────────
+        // Zgodę na przetwarzanie danych (wymaganą) zostawiamy bez zmian — nie da
+        // się jej wyłączyć z aplikacji. Pozostałe są opcjonalne.
+        if (!$request->isMethod('get')) {
+            $validated = $request->validate([
+                'consentReceiveSmsEmailPhone' => 'sometimes|boolean',
+                'marketingAgreement'          => 'sometimes|boolean',
+                'newsletter'                  => 'sometimes|boolean',
+            ]);
+
+            if (array_key_exists('consentReceiveSmsEmailPhone', $validated)) {
+                $user->consentReceiveSmsEmailPhone = $validated['consentReceiveSmsEmailPhone'] ? 1 : 0;
+            }
+            if (array_key_exists('marketingAgreement', $validated)) {
+                $user->marketingAgreement = $validated['marketingAgreement'] ? 1 : 0;
+            }
+            if (array_key_exists('newsletter', $validated)) {
+                $user->Newsletter = $validated['newsletter'] ? 1 : 0;
+            }
+            $user->save();
+
+            // Push do CRM (źródło prawdy) — inaczej najbliższy sync nadpisałby zmianę.
+            try {
+                $crmClient->post('/CrmToMobileSync/setUserConsents', [
+                    'usersID'                       => (int) $user->UsersID,
+                    'personalDataProcessingConsent' => (int) $user->PersonalDataProcessingConsent,
+                    'consentReceiveSmsEmailPhone'   => (int) $user->consentReceiveSmsEmailPhone,
+                    'marketingAgreement'            => (int) $user->marketingAgreement,
+                    'newsletter'                    => (int) $user->Newsletter,
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('Consents: push do CRM nieudany', [
+                    'user_id' => $user->UsersID,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'consents' => [
                 'PersonalDataProcessingConsent' => (bool) $user->PersonalDataProcessingConsent,
-                'consentReceiveSmsEmailPhone' => (bool) $user->consentReceiveSmsEmailPhone,
-                'marketingAgreement' => (bool) $user->marketingAgreement,
+                'consentReceiveSmsEmailPhone'   => (bool) $user->consentReceiveSmsEmailPhone,
+                'marketingAgreement'            => (bool) $user->marketingAgreement,
+                'newsletter'                    => (bool) $user->Newsletter,
             ],
         ]);
     }
