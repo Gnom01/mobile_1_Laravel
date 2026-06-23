@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\InstructorAnnouncement;
+use App\Models\InstructorMessage;
 use App\Models\InstructorReport;
 use App\Models\InstructorScheduleChange;
 use App\Services\FirebasePushService;
@@ -27,8 +28,14 @@ use Illuminate\Support\Facades\Validator;
  */
 class InstructorController extends Controller
 {
+    /** Ile dni wstecz uznajemy grupę za „aktywną" (na podstawie ostatnich zajęć). */
+    private const ACTIVE_LOOKBACK_DAYS = 120;
+
     /** @var FirebasePushService */
     private $push;
+
+    /** Cache wyznaczonych grup per zestaw EmployeesID (w obrębie requestu). */
+    private array $headingCache = [];
 
     public function __construct(FirebasePushService $push)
     {
@@ -46,7 +53,7 @@ class InstructorController extends Controller
             return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
         }
 
-        $groups = $this->instructorGroupsQuery($employeeIds)->get();
+        $groups = $this->instructorGroupRows($employeeIds);
 
         $headingIds = $groups->pluck('coursesHeadingsID')->all();
         $counts = $this->participantCounts($headingIds);
@@ -55,10 +62,10 @@ class InstructorController extends Controller
             'id'            => (int) $g->coursesHeadingsID,
             'groupId'       => (int) $g->coursesHeadingsID,
             'name'          => $g->courseHeadingName,
-            'frequency'     => $g->frequency,
-            'time'          => $g->courseTimeName,
+            'frequency'     => '',
+            'time'          => '',
             'localization'  => $g->localizationName,
-            'instructors'   => $g->instructorsList,
+            'instructors'   => '',
             'count'         => (int) ($counts[$g->coursesHeadingsID] ?? 0),
         ])->values();
 
@@ -133,6 +140,8 @@ class InstructorController extends Controller
         $bodyTxt = $data['body'];
 
         // Wyznacz odbiorców + autoryzacja przynależności do grup instruktora.
+        $groupId = null;
+        $participantUserId = null;
         if ($data['target'] === 'group') {
             $groupId = (int) ($data['groupId'] ?? 0);
             if ($groupId <= 0 || !$this->ownsGroup($employeeIds, $groupId)) {
@@ -166,11 +175,58 @@ class InstructorController extends Controller
             }
         }
 
+        // Zapisz historię, żeby instruktor widział, co i do kogo wysłał.
+        $message = InstructorMessage::create([
+            'instructor_user_id'  => (int) $request->user()->getKey(),
+            'target'              => $data['target'],
+            'group_id'            => $groupId,
+            'participant_user_id' => $participantUserId,
+            'title'               => $title,
+            'body'                => $bodyTxt,
+            'recipient_count'     => $sent,
+        ]);
+
         return response()->json([
             'status'         => '200',
             'message'        => 'Komunikat wysłany.',
             'recipientCount' => $sent,
+            'data'           => $this->mapMessage($message->fresh(), $this->groupNamesMap()),
         ]);
+    }
+
+    /**
+     * GET /api/instructor/messages
+     * Historia komunikatów wysłanych przez zalogowanego instruktora.
+     */
+    public function messages(Request $request): JsonResponse
+    {
+        $instructorUserId = (int) $request->user()->getKey();
+
+        $rows = InstructorMessage::where('instructor_user_id', $instructorUserId)
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get();
+
+        $groupNames = $this->groupNamesMap();
+        $body = $rows->map(fn ($r) => $this->mapMessage($r, $groupNames))->values();
+
+        return response()->json(['status' => '200', 'body' => $body, 'recordCount' => $body->count()]);
+    }
+
+    private function mapMessage(InstructorMessage $r, array $groupNames): array
+    {
+        return [
+            'id'              => (int) $r->id,
+            'target'          => $r->target,
+            'groupId'         => $r->group_id ? (int) $r->group_id : null,
+            'groupName'       => $r->group_id ? ($groupNames[$r->group_id] ?? null) : null,
+            'participantId'   => $r->participant_user_id ? (int) $r->participant_user_id : null,
+            'participantName' => $r->participant_user_id ? $this->userName((int) $r->participant_user_id) : null,
+            'title'           => $r->title,
+            'body'            => $r->body,
+            'recipientCount'  => (int) $r->recipient_count,
+            'createdAt'       => optional($r->created_at)->toIso8601String(),
+        ];
     }
 
     /**
@@ -197,8 +253,7 @@ class InstructorController extends Controller
         $from = $request->input('from') ?: now()->format('Y-m-d');
         $to   = $request->input('to') ?: now()->addDays(14)->format('Y-m-d');
 
-        $groupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')
-            ->map(fn ($v) => (int) $v)->all();
+        $groupIds = $this->instructorHeadingIds($employeeIds);
         if (empty($groupIds)) {
             return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
         }
@@ -289,7 +344,7 @@ class InstructorController extends Controller
             return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
         }
 
-        $groups = $this->instructorGroupsQuery($employeeIds)->get();
+        $groups = $this->instructorGroupRows($employeeIds);
         $groupNameById = [];
         foreach ($groups as $g) {
             $groupNameById[(int) $g->coursesHeadingsID] = $g->courseHeadingName;
@@ -299,16 +354,14 @@ class InstructorController extends Controller
             return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
         }
 
-        // userId => [groupId,...] z obu źródeł zapisów.
+        // userId => [groupId,...] z umów.
         $map = [];
-        foreach (['usersproducts', 'usersschedules'] as $tbl) {
-            $rows = DB::table($tbl)
-                ->whereIn('coursesheadingsid', $groupIds)
-                ->where('cancelled', 0)
-                ->get(['usersid', 'coursesheadingsid']);
-            foreach ($rows as $r) {
-                $map[(int) $r->usersid][(int) $r->coursesheadingsid] = true;
-            }
+        $rows = DB::table('contracts')
+            ->whereIn('coursesHeadingsID', $groupIds)
+            ->where('cancelled', 0)
+            ->get(['usersID', 'coursesHeadingsID']);
+        foreach ($rows as $r) {
+            $map[(int) $r->usersID][(int) $r->coursesHeadingsID] = true;
         }
         if (empty($map)) {
             return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
@@ -416,8 +469,7 @@ class InstructorController extends Controller
         }
 
         // Walidacja przynależności wszystkich grup do instruktora.
-        $ownedGroupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')
-            ->map(fn ($v) => (int) $v)->all();
+        $ownedGroupIds = $this->instructorHeadingIds($employeeIds);
         $groupIds = array_values(array_unique(array_map('intval', $data['groupIds'])));
         $invalid  = array_diff($groupIds, $ownedGroupIds);
         if (!empty($invalid)) {
@@ -549,8 +601,7 @@ class InstructorController extends Controller
 
         $groupIds = [];
         if (!empty($data['groupIds'])) {
-            $ownedGroupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')
-                ->map(fn ($v) => (int) $v)->all();
+            $ownedGroupIds = $this->instructorHeadingIds($employeeIds);
             $groupIds = array_values(array_unique(array_map('intval', $data['groupIds'])));
             $invalid  = array_diff($groupIds, $ownedGroupIds);
             if (!empty($invalid)) {
@@ -645,46 +696,87 @@ class InstructorController extends Controller
             ->all();
     }
 
-    /** Bazowe zapytanie o grupy prowadzone przez podane EmployeesID. */
-    private function instructorGroupsQuery(array $employeeIds)
+    /**
+     * coursesHeadingsID grup prowadzonych przez instruktora.
+     *
+     * Źródłem jest pełny harmonogram `scheduleseventssettlements`
+     * (`instructorsIDList`, FIND_IN_SET z EmployeesID) — tabela `courses`
+     * zawiera tylko wąski podzbiór „oferty WWW" i nie nadaje się tu.
+     * Zawężamy do grup aktywnych: zdarzenia od (dziś − ACTIVE_LOOKBACK_DAYS).
+     *
+     * @return array<int>
+     */
+    private function instructorHeadingIds(array $employeeIds): array
     {
-        $query = DB::table('courses')->where('websiteStatusesDVID', '!=', 0);
-        $query->where(function ($q) use ($employeeIds) {
-            foreach ($employeeIds as $eid) {
-                $q->orWhereRaw('FIND_IN_SET(?, instructorEmployeesIDList)', [$eid]);
-            }
-        });
-        return $query->orderBy('courseHeadingName');
+        if (empty($employeeIds)) {
+            return [];
+        }
+        $cacheKey = implode(',', $employeeIds);
+        if (isset($this->headingCache[$cacheKey])) {
+            return $this->headingCache[$cacheKey];
+        }
+
+        $cutoff = now()->subDays(self::ACTIVE_LOOKBACK_DAYS)->format('Y-m-d');
+
+        $ids = DB::table('scheduleseventssettlements')
+            ->where('cancelled', 0)
+            ->where('eventDate', '>=', $cutoff)
+            ->where(function ($q) use ($employeeIds) {
+                foreach ($employeeIds as $eid) {
+                    $q->orWhereRaw('FIND_IN_SET(?, instructorsIDList)', [$eid]);
+                }
+            })
+            ->distinct()
+            ->pluck('coursesHeadingsID')
+            ->map(fn ($v) => (int) $v)
+            ->filter()
+            ->values()
+            ->all();
+
+        return $this->headingCache[$cacheKey] = $ids;
+    }
+
+    /** Grupy instruktora jako wiersze z coursesheadings (id, nazwa, lokalizacja). */
+    private function instructorGroupRows(array $employeeIds)
+    {
+        $headingIds = $this->instructorHeadingIds($employeeIds);
+        if (empty($headingIds)) {
+            return collect();
+        }
+
+        $rows = DB::table('coursesheadings')
+            ->whereIn('CoursesHeadingsID', $headingIds)
+            ->where('Cancelled', 0)
+            ->orderBy('CourseHeadingName')
+            ->get(['CoursesHeadingsID', 'CourseHeadingName', 'LocalizationsID']);
+
+        $locNames = DB::table('localizations')
+            ->whereIn('LocalizationsID', $rows->pluck('LocalizationsID')->filter()->unique()->all() ?: [0])
+            ->pluck('LocalizationName', 'LocalizationsID');
+
+        return $rows->map(fn ($r) => (object) [
+            'coursesHeadingsID' => (int) $r->CoursesHeadingsID,
+            'courseHeadingName' => (string) $r->CourseHeadingName,
+            'localizationsID'   => (int) $r->LocalizationsID,
+            'localizationName'  => (string) ($locNames[$r->LocalizationsID] ?? ''),
+        ]);
     }
 
     private function ownsGroup(array $employeeIds, int $groupId): bool
     {
-        return $this->instructorGroupsQuery($employeeIds)
-            ->where('coursesHeadingsID', $groupId)
-            ->exists();
+        return in_array($groupId, $this->instructorHeadingIds($employeeIds), true);
     }
 
     /** UsersID uczestników grupy (aktywne zapisy). */
     private function groupParticipantIds(int $groupId): array
     {
-        $fromProducts = DB::table('usersproducts')
-            ->where('coursesheadingsid', $groupId)
+        return DB::table('contracts')
+            ->where('coursesHeadingsID', $groupId)
             ->where('cancelled', 0)
             ->distinct()
-            ->pluck('usersid')
+            ->pluck('usersID')
+            ->map(fn ($v) => (int) $v)
             ->all();
-
-        $fromSchedules = DB::table('usersschedules')
-            ->where('coursesheadingsid', $groupId)
-            ->where('cancelled', 0)
-            ->distinct()
-            ->pluck('usersid')
-            ->all();
-
-        return array_values(array_unique(array_map(
-            fn ($v) => (int) $v,
-            array_merge($fromProducts, $fromSchedules)
-        )));
     }
 
     /** Liczby uczestników dla zbioru grup (jedno zapytanie zgrupowane). */
@@ -693,12 +785,12 @@ class InstructorController extends Controller
         if (empty($headingIds)) {
             return [];
         }
-        return DB::table('usersproducts')
-            ->select('coursesheadingsid', DB::raw('COUNT(DISTINCT usersid) as c'))
-            ->whereIn('coursesheadingsid', $headingIds)
+        return DB::table('contracts')
+            ->select('coursesHeadingsID', DB::raw('COUNT(DISTINCT usersID) as c'))
+            ->whereIn('coursesHeadingsID', $headingIds)
             ->where('cancelled', 0)
-            ->groupBy('coursesheadingsid')
-            ->pluck('c', 'coursesheadingsid')
+            ->groupBy('coursesHeadingsID')
+            ->pluck('c', 'coursesHeadingsID')
             ->all();
     }
 
@@ -719,30 +811,23 @@ class InstructorController extends Controller
 
     private function instructorHasParticipant(array $employeeIds, int $participantUserId): bool
     {
-        $groupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')->all();
+        $groupIds = $this->instructorHeadingIds($employeeIds);
         if (empty($groupIds)) {
             return false;
         }
-        $inProducts = DB::table('usersproducts')
-            ->whereIn('coursesheadingsid', $groupIds)
-            ->where('usersid', $participantUserId)
-            ->where('cancelled', 0)
-            ->exists();
-        if ($inProducts) {
-            return true;
-        }
-        return DB::table('usersschedules')
-            ->whereIn('coursesheadingsid', $groupIds)
-            ->where('usersid', $participantUserId)
+        return DB::table('contracts')
+            ->whereIn('coursesHeadingsID', $groupIds)
+            ->where('usersID', $participantUserId)
             ->where('cancelled', 0)
             ->exists();
     }
 
-    /** Mapa coursesHeadingsID => nazwa grupy (dla zalogowanego instruktora i ogólnie). */
+    /** Mapa coursesHeadingsID => nazwa grupy (z coursesheadings — pełny zbiór). */
     private function groupNamesMap(): array
     {
-        return DB::table('courses')
-            ->pluck('courseHeadingName', 'coursesHeadingsID')
+        return DB::table('coursesheadings')
+            ->where('Cancelled', 0)
+            ->pluck('CourseHeadingName', 'CoursesHeadingsID')
             ->map(fn ($v) => (string) $v)
             ->all();
     }
@@ -810,13 +895,13 @@ class InstructorController extends Controller
             ->where('LocalizationsID', '>', 0)
             ->pluck('LocalizationsID')->map(fn ($v) => (int) $v)->all();
 
-        $groupIds = $this->instructorGroupsQuery($employeeIds)->pluck('coursesHeadingsID')->all();
-        $fromCourses = empty($groupIds) ? [] : DB::table('courses')
-            ->whereIn('coursesHeadingsID', $groupIds)
-            ->where('localizationsID', '>', 0)
-            ->pluck('localizationsID')->map(fn ($v) => (int) $v)->all();
+        $groupIds = $this->instructorHeadingIds($employeeIds);
+        $fromHeadings = empty($groupIds) ? [] : DB::table('coursesheadings')
+            ->whereIn('CoursesHeadingsID', $groupIds)
+            ->where('LocalizationsID', '>', 0)
+            ->pluck('LocalizationsID')->map(fn ($v) => (int) $v)->all();
 
-        return array_values(array_unique(array_merge($fromEmployees, $fromCourses)));
+        return array_values(array_unique(array_merge($fromEmployees, $fromHeadings)));
     }
 
     private function mapScheduleChange(InstructorScheduleChange $r, array $groupNames): array

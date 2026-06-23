@@ -60,7 +60,7 @@ final class SchoolManagerResolver
         )));
     }
 
-    /** LocalizationsID dla podanych grup (z tabeli courses). */
+    /** LocalizationsID dla podanych grup (z coursesheadings — pełny zbiór). */
     private static function localizationIdsForGroups(array $coursesHeadingsIds): array
     {
         $coursesHeadingsIds = array_values(array_filter(array_map('intval', $coursesHeadingsIds)));
@@ -68,11 +68,11 @@ final class SchoolManagerResolver
             return [];
         }
 
-        return DB::table('courses')
-            ->whereIn('coursesHeadingsID', $coursesHeadingsIds)
-            ->where('localizationsID', '>', 0)
+        return DB::table('coursesheadings')
+            ->whereIn('CoursesHeadingsID', $coursesHeadingsIds)
+            ->where('LocalizationsID', '>', 0)
             ->distinct()
-            ->pluck('localizationsID')
+            ->pluck('LocalizationsID')
             ->map(fn ($v) => (int) $v)
             ->all();
     }

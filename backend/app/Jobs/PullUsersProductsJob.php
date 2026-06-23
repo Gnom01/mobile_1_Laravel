@@ -30,6 +30,13 @@ class PullUsersProductsJob implements ShouldQueue
             'fieldMap'       => function (array $r): array {
                 // productsLevels is a stored generated column — MySQL rejects explicit inserts
                 unset($r['productsLevels'], $r['productslevels']);
+
+                foreach (['vatratesik', 'paymentmethodsdvidlist', 'promotrionsidlist'] as $column) {
+                    if (($r[$column] ?? null) === null) {
+                        $r[$column] = '';
+                    }
+                }
+
                 return $r;
             },
         ]);

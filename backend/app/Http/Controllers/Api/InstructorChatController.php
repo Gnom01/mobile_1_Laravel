@@ -253,19 +253,28 @@ class InstructorChatController extends Controller
             ->pluck('EmployeesID')->map(fn ($v) => (int) $v)->all();
     }
 
-    /** Grupy instruktora (coursesHeadingsID). */
+    /**
+     * Grupy instruktora (coursesHeadingsID) — z pełnego harmonogramu
+     * `scheduleseventssettlements` (instructorsIDList), nie z wąskiej tabeli
+     * `courses`. Zawężone do grup aktywnych (ostatnie 120 dni zajęć).
+     */
     private function instructorGroupIds(array $employeeIds): array
     {
         if (empty($employeeIds)) {
             return [];
         }
-        $query = DB::table('courses')->where('websiteStatusesDVID', '!=', 0);
-        $query->where(function ($q) use ($employeeIds) {
-            foreach ($employeeIds as $eid) {
-                $q->orWhereRaw('FIND_IN_SET(?, instructorEmployeesIDList)', [$eid]);
-            }
-        });
-        return $query->pluck('coursesHeadingsID')->map(fn ($v) => (int) $v)->all();
+        $cutoff = now()->subDays(120)->format('Y-m-d');
+
+        return DB::table('scheduleseventssettlements')
+            ->where('cancelled', 0)
+            ->where('eventDate', '>=', $cutoff)
+            ->where(function ($q) use ($employeeIds) {
+                foreach ($employeeIds as $eid) {
+                    $q->orWhereRaw('FIND_IN_SET(?, instructorsIDList)', [$eid]);
+                }
+            })
+            ->distinct()
+            ->pluck('coursesHeadingsID')->map(fn ($v) => (int) $v)->filter()->values()->all();
     }
 
     /** Uczestnicy wszystkich grup instruktora. */

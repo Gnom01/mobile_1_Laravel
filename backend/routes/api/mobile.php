@@ -91,6 +91,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/instructor/groups/{groupId}/participants', [InstructorController::class, 'participants']);
     Route::get('/instructor/participants', [InstructorController::class, 'allParticipants']);
     Route::post('/instructor/messages', [InstructorController::class, 'sendMessage']);
+    Route::get('/instructor/messages', [InstructorController::class, 'messages']);
 
     // Instructor — harmonogram
     Route::get('/instructor/schedule', [InstructorController::class, 'schedule']);

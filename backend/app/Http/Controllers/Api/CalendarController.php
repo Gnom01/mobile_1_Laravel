@@ -91,12 +91,62 @@ class CalendarController extends Controller
             array_merge($scopeUserIds, [$monthStart, $monthEnd, $monthEnd, $monthStart])
         );
 
-        $body = array_map(static function ($row) {
-            return [
-                'date' => $row->date,
-                'count' => (int) $row->eventsCount,
+        $bodyDict = [];
+        foreach ($rows as $row) {
+            $bodyDict[$row->date] = (int) $row->eventsCount;
+        }
+
+        if (in_array((int) $authUser->UsersID, $scopeUserIds, true)) {
+            $employeeIds = \App\Models\Employee::where('UsersID', $authUser->UsersID)
+                ->where(function ($q) {
+                    $q->whereNull('Cancelled')->orWhere('Cancelled', 0);
+                })
+                ->pluck('EmployeesID')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            if (!empty($employeeIds)) {
+                $employeeOrWhere = [];
+                $employeeBindings = [];
+                foreach ($employeeIds as $eid) {
+                    $employeeOrWhere[] = "FIND_IN_SET(?, ses.instructorsIDList)";
+                    $employeeBindings[] = $eid;
+                }
+                $orWhereSql = implode(' OR ', $employeeOrWhere);
+
+                $instructorRows = DB::select(
+                    "
+                    SELECT
+                        ses.eventDate AS date,
+                        COUNT(DISTINCT ses.schedulesEventsSettlementsID) AS eventsCount
+                    FROM scheduleseventssettlements ses
+                    WHERE ses.cancelled = 0
+                        AND ses.eventDate BETWEEN ? AND ?
+                        AND ($orWhereSql)
+                    GROUP BY ses.eventDate
+                    ",
+                    array_merge([$monthStart, $monthEnd], $employeeBindings)
+                );
+
+                foreach ($instructorRows as $row) {
+                    if (isset($bodyDict[$row->date])) {
+                        $bodyDict[$row->date] += (int) $row->eventsCount;
+                    } else {
+                        $bodyDict[$row->date] = (int) $row->eventsCount;
+                    }
+                }
+            }
+        }
+
+        $body = [];
+        foreach ($bodyDict as $date => $count) {
+            $body[] = [
+                'date' => $date,
+                'count' => $count,
             ];
-        }, $rows);
+        }
+
+        usort($body, fn($a, $b) => strcmp($a['date'], $b['date']));
 
         return response()->json([
             'success' => true,
@@ -154,7 +204,8 @@ class CalendarController extends Controller
                 COALESCE(xs.groupname, c.courseHeadingName, course.courseHeadingName, ch.CourseHeadingName, '') AS groupName,
                 COALESCE(l.LocalizationName, course.localizationName, xs.location, '') AS locationName,
                 COALESCE(xs.instructors, course.instructorsList, '') AS instructors,
-                COALESCE(xs.description, '') AS description
+                COALESCE(xs.description, '') AS description,
+                0 AS isInstructorEvent
             FROM contracts c
             INNER JOIN scheduleseventssettlements ses
                 ON ses.coursesHeadingsID = c.coursesHeadingsID
@@ -174,10 +225,72 @@ class CalendarController extends Controller
                 AND ses.eventDate = ?
                 AND (c.contractPeriodFrom IS NULL OR c.contractPeriodFrom <= ?)
                 AND (c.contractPeriodTo IS NULL OR c.contractPeriodTo >= ?)
-            ORDER BY ses.timeFrom ASC, ses.timeTo ASC, c.userLastName ASC, c.userFirstName ASC
             ",
             array_merge($scopeUserIds, [$selectedDate, $selectedDate, $selectedDate])
         );
+
+        if (in_array((int) $authUser->UsersID, $scopeUserIds, true)) {
+            $employeeIds = \App\Models\Employee::where('UsersID', $authUser->UsersID)
+                ->where(function ($q) {
+                    $q->whereNull('Cancelled')->orWhere('Cancelled', 0);
+                })
+                ->pluck('EmployeesID')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            if (!empty($employeeIds)) {
+                $employeeOrWhere = [];
+                $employeeBindings = [];
+                foreach ($employeeIds as $eid) {
+                    $employeeOrWhere[] = "FIND_IN_SET(?, ses.instructorsIDList)";
+                    $employeeBindings[] = $eid;
+                }
+                $orWhereSql = implode(' OR ', $employeeOrWhere);
+
+                $instructorRows = DB::select(
+                    "
+                    SELECT DISTINCT
+                        ses.schedulesEventsSettlementsID,
+                        ses.schedulesID,
+                        ses.eventDate,
+                        ses.timeFrom,
+                        ses.timeTo,
+                        ses.coursesHeadingsID,
+                        ? AS participantUsersID,
+                        ? AS participantFirstName,
+                        ? AS participantLastName,
+                        COALESCE(course.courseHeadingName, ch.CourseHeadingName, '') AS title,
+                        COALESCE(xs.groupname, course.courseHeadingName, ch.CourseHeadingName, '') AS groupName,
+                        COALESCE(l.LocalizationName, course.localizationName, xs.location, '') AS locationName,
+                        COALESCE(xs.instructors, course.instructorsList, '') AS instructors,
+                        COALESCE(xs.description, '') AS description,
+                        1 AS isInstructorEvent
+                    FROM scheduleseventssettlements ses
+                    LEFT JOIN xschedules xs
+                        ON xs.id = ses.schedulesID
+                    LEFT JOIN courses course
+                        ON course.coursesHeadingsID = ses.coursesHeadingsID
+                    LEFT JOIN coursesheadings ch
+                        ON ch.CoursesHeadingsID = ses.coursesHeadingsID
+                        AND ch.Cancelled = 0
+                    LEFT JOIN localizations l
+                        ON l.LocalizationsID = ses.localizationsID
+                        AND l.Cancelled = 0
+                    WHERE ses.cancelled = 0
+                        AND ses.eventDate = ?
+                        AND ($orWhereSql)
+                    ",
+                    array_merge([
+                        $authUser->UsersID,
+                        $authUser->FirstName ?? '',
+                        $authUser->LastName ?? '',
+                        $selectedDate
+                    ], $employeeBindings)
+                );
+
+                $rows = array_merge($rows, $instructorRows);
+            }
+        }
 
         $body = array_map(static function ($row) {
             return [
@@ -202,12 +315,37 @@ class CalendarController extends Controller
                 'locationName' => (string) $row->locationName,
                 'instructors' => (string) $row->instructors,
                 'description' => (string) $row->description,
+                'isInstructorEvent' => (bool) ($row->isInstructorEvent ?? false),
             ];
         }, $rows);
 
+        usort($body, function ($a, $b) {
+            if ($a['timeFrom'] !== $b['timeFrom']) {
+                return strcmp($a['timeFrom'], $b['timeFrom']);
+            }
+            if ($a['timeTo'] !== $b['timeTo']) {
+                return strcmp($a['timeTo'], $b['timeTo']);
+            }
+            if ($a['participantLastName'] !== $b['participantLastName']) {
+                return strcmp($a['participantLastName'], $b['participantLastName']);
+            }
+            return strcmp($a['participantFirstName'], $b['participantFirstName']);
+        });
+
+        // Deduplicate just in case an instructor is also a participant in the same event
+        $uniqueBody = [];
+        $seen = [];
+        foreach ($body as $item) {
+            $key = $item['id'] . '-' . $item['participantUsersID'];
+            if (!isset($seen[$key])) {
+                $seen[$key] = true;
+                $uniqueBody[] = $item;
+            }
+        }
+
         return response()->json([
             'success' => true,
-            'body' => $body,
+            'body' => $uniqueBody,
         ]);
     }
 

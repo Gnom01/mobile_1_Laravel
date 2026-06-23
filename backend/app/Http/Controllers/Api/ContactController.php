@@ -312,16 +312,28 @@ class ContactController extends Controller
             return [];
         }
 
-        $courses = DB::table('courses')
+        // Nazwy grup z coursesheadings (pełny zbiór, nie z wąskiej tabeli courses).
+        $groupNames = DB::table('coursesheadings')
+            ->whereIn('CoursesHeadingsID', $groupIds)
+            ->pluck('CourseHeadingName', 'CoursesHeadingsID');
+
+        // Instruktorzy grup wyznaczani z harmonogramu (scheduleseventssettlements.instructorsIDList),
+        // bo `courses` zawiera tylko podzbiór „oferty WWW".
+        $scheduleRows = DB::table('scheduleseventssettlements')
+            ->where('cancelled', 0)
             ->whereIn('coursesHeadingsID', $groupIds)
-            ->get(['coursesHeadingsID', 'courseHeadingName', 'instructorEmployeesIDList']);
+            ->where('instructorsIDList', '<>', '')
+            ->select('coursesHeadingsID', 'instructorsIDList')
+            ->distinct()
+            ->get();
 
         $byEmployee = [];
-        foreach ($courses as $c) {
-            $eids = array_filter(array_map('trim', explode(',', (string) $c->instructorEmployeesIDList)));
+        foreach ($scheduleRows as $r) {
+            $eids = array_filter(array_map('trim', explode(',', (string) $r->instructorsIDList)));
+            $gname = $groupNames[$r->coursesHeadingsID] ?? '';
             foreach ($eids as $eid) {
                 if (is_numeric($eid)) {
-                    $byEmployee[(int) $eid]['groups'][] = $c->courseHeadingName;
+                    $byEmployee[(int) $eid]['groups'][$gname] = true;
                 }
             }
         }
@@ -343,7 +355,7 @@ class ContactController extends Controller
             $result[$uid] = [
                 'instructorUserId' => $uid,
                 'name'             => $name !== '' ? $name : 'Instruktor',
-                'groups'           => array_values(array_unique($byEmployee[$emp->EmployeesID]['groups'] ?? [])),
+                'groups'           => array_values(array_filter(array_keys($byEmployee[$emp->EmployeesID]['groups'] ?? []))),
             ];
         }
 
