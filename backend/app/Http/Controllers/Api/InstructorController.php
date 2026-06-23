@@ -112,6 +112,57 @@ class InstructorController extends Controller
     }
 
     /**
+     * GET /api/instructor/participants/{userId}/relations
+     * Osoby powiązane uczestnika (rodzice/opiekunowie i dzieci) — do podglądu
+     * „kto jeszcze zobaczy wiadomość". Dostępne tylko, gdy uczestnik należy do
+     * grup zalogowanego instruktora.
+     */
+    public function participantRelations(Request $request, int $userId): JsonResponse
+    {
+        $employeeIds = $this->employeeIds($request);
+        if (empty($employeeIds) || !$this->instructorHasParticipant($employeeIds, $userId)) {
+            return response()->json(['message' => 'Brak dostępu do tego uczestnika.'], 403);
+        }
+
+        // Rodzice/opiekunowie: usersrelations.UsersID = uczestnik → Parent_UsersID.
+        $parentIds = DB::table('usersrelations')
+            ->where('UsersID', $userId)->where('Cancelled', 0)
+            ->pluck('Parent_UsersID')->map(fn ($v) => (int) $v)->all();
+        // Dzieci/podopieczni: usersrelations.Parent_UsersID = uczestnik → UsersID.
+        $childIds = DB::table('usersrelations')
+            ->where('Parent_UsersID', $userId)->where('Cancelled', 0)
+            ->pluck('UsersID')->map(fn ($v) => (int) $v)->all();
+
+        $ids = array_values(array_unique(array_filter(
+            array_merge($parentIds, $childIds),
+            fn ($v) => $v > 0 && $v !== $userId
+        )));
+        if (empty($ids)) {
+            return response()->json(['status' => '200', 'body' => [], 'recordCount' => 0]);
+        }
+
+        $users = DB::table('users')
+            ->whereIn('UsersID', $ids)
+            ->where('Cancelled', 0)
+            ->get(['UsersID', 'guid', 'FirstName', 'LastName']);
+
+        $body = $users->map(fn ($u) => [
+            'usersID'   => (int) $u->UsersID,
+            'guid'      => $u->guid,
+            'firstName' => $u->FirstName,
+            'lastName'  => $u->LastName,
+            'fullName'  => trim(($u->FirstName ?? '') . ' ' . ($u->LastName ?? '')),
+            'relation'  => in_array((int) $u->UsersID, $parentIds, true) ? 'rodzic/opiekun' : 'dziecko',
+        ])->values();
+
+        return response()->json([
+            'status'      => '200',
+            'body'        => $body,
+            'recordCount' => $body->count(),
+        ]);
+    }
+
+    /**
      * POST /api/instructor/messages
      * Wysyła komunikat push do całej grupy lub do jednego uczestnika.
      *

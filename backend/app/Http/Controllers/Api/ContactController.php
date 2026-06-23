@@ -59,6 +59,19 @@ class ContactController extends Controller
     }
 
     /**
+     * GET /api/contact/me
+     * Numeryczne UsersID zalogowanego — potrzebne Flutterowi, by jako instruktor
+     * otworzyć wątek (participant, instructor=ja) bez wyboru instruktora.
+     */
+    public function me(Request $request): JsonResponse
+    {
+        return response()->json([
+            'status' => '200',
+            'userId' => (int) $request->user()->getKey(),
+        ]);
+    }
+
+    /**
      * GET /api/contact/threads
      * Wszystkie wątki widoczne dla zalogowanego (moje + moich dzieci + jako instruktor).
      */

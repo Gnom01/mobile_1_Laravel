@@ -89,6 +89,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Instructor (grupy + komunikaty push)
     Route::get('/instructor/groups', [InstructorController::class, 'groups']);
     Route::get('/instructor/groups/{groupId}/participants', [InstructorController::class, 'participants']);
+    Route::get('/instructor/participants/{userId}/relations', [InstructorController::class, 'participantRelations']);
     Route::get('/instructor/participants', [InstructorController::class, 'allParticipants']);
     Route::post('/instructor/messages', [InstructorController::class, 'sendMessage']);
     Route::get('/instructor/messages', [InstructorController::class, 'messages']);
@@ -117,6 +118,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Kontakt / czat uczestnik ↔ instruktor (z dostępem rodzica do wątków dzieci)
     Route::get('/contact/participants', [ContactController::class, 'participants']);
+    Route::get('/contact/me', [ContactController::class, 'me']);
     Route::get('/contact/threads', [ContactController::class, 'threads']);
     Route::get('/contact/conversation', [ContactController::class, 'conversation']);
     Route::post('/contact/messages', [ContactController::class, 'send']);
