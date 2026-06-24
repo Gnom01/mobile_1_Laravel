@@ -70,9 +70,9 @@ class CrmDashboardBannerController extends Controller
     private function authorizeCrm(Request $request): void
     {
         $expected = config('services.crm.push_api_token');
-        if (!$expected) {
-            return;
-        }
+        // Fail-closed: brak skonfigurowanego tokenu = brak dostępu (wcześniej
+        // pusty token przepuszczał tworzenie/edycję banerów bez uwierzytelnienia).
+        abort_if($expected === null || $expected === '', 503, 'CRM token is not configured.');
 
         abort_unless(hash_equals($expected, (string) $request->bearerToken()), 401, 'Invalid CRM token');
     }

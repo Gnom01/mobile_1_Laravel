@@ -343,14 +343,27 @@ class WorkshopController extends Controller
     {
         $request->validate([
             'type'                => ['required', 'string', 'in:ygm,euro'],
-            'participantID'       => ['required', 'integer'],
+            'participantID'       => ['nullable', 'integer'],
+            'participantGuid'     => ['nullable', 'string'],
+            'guid'                => ['nullable', 'string'],
             'categoryID'          => ['required', 'integer'],
             'selectedProductsIDs' => ['required', 'array'],
             'selectedProductsIDs.*' => ['integer'],
         ]);
 
+        // Rozwiąż uczestnika z GUID (preferowane) i ZWERYFIKUJ własność —
+        // wcześniej Flutter wysyłał int wyliczany z hashCode guida → zapis na
+        // przypadkową osobę. Teraz: tylko zalogowany lub jego osoba powiązana.
+        $authUserId = (int) $request->user()->getKey();
+        $participantID = $this->resolveOwnedParticipant($request, $authUserId);
+        if ($participantID === null) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Nie możesz zapisać tej osoby na warsztaty.',
+            ], 403);
+        }
+
         $type = $request->input('type');
-        $participantID = (int) $request->input('participantID');
         $categoryID = (int) $request->input('categoryID');
         $selectedIDs = $request->input('selectedProductsIDs');
 
@@ -581,7 +594,9 @@ class WorkshopController extends Controller
         $finalTotal = round($rawTotal - $discountAmount, 2);
 
         // 7. Save selection via CRM getEuWorkshopGroupPrices
-        $trackingId = (string) Str::uuid();
+        // Idempotencja: użyj guida przysłanego przez klienta (ten sam przy retry/
+        // podwójnym tapnięciu → CRM dedupuje po guid), inaczej wygeneruj nowy.
+        $trackingId = (string) ($request->input('guid') ?: Str::uuid());
         $productsLevel2DVID = $type === 'ygm' ? 55 : 56;
 
         $savePayload = [
@@ -653,5 +668,48 @@ class WorkshopController extends Controller
                 'message' => 'Błąd procesowania płatności: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Rozwiązuje uczestnika z `participantGuid` (preferowane) lub `participantID`
+     * i weryfikuje, że to zalogowany albo jego osoba powiązana. Zwraca UsersID
+     * lub null, gdy brak uprawnień.
+     */
+    private function resolveOwnedParticipant(Request $request, int $authUserId): ?int
+    {
+        $guid = trim((string) $request->input('participantGuid', ''));
+        if ($guid !== '') {
+            $id = (int) DB::table('users')->where('guid', $guid)->value('UsersID');
+        } else {
+            $id = (int) $request->input('participantID', 0);
+        }
+        if ($id <= 0) {
+            $id = $authUserId; // brak wskazania = zapis na siebie
+        }
+        return $this->ownsOrRelated($authUserId, $id) ? $id : null;
+    }
+
+    /** Czy $targetUserId to zalogowany lub jego potwierdzona osoba powiązana. */
+    private function ownsOrRelated(int $authUserId, int $targetUserId): bool
+    {
+        if ($targetUserId <= 0) {
+            return false;
+        }
+        if ($targetUserId === $authUserId) {
+            return true;
+        }
+        $asGuardian = DB::table('usersrelations')
+            ->where('Parent_UsersID', $authUserId)
+            ->where('UsersID', $targetUserId)
+            ->where('Cancelled', 0)
+            ->exists();
+        if ($asGuardian) {
+            return true;
+        }
+        return DB::table('usersrelations')
+            ->where('Parent_UsersID', $targetUserId)
+            ->where('UsersID', $authUserId)
+            ->where('Cancelled', 0)
+            ->exists();
     }
 }

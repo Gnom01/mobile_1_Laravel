@@ -27,7 +27,7 @@ class PullDictionariesJob implements ShouldQueue
             ],
             'fieldMap' => function (array $r) use ($syncService) {
                 $mapped = [
-                    'Parent_DictionariesID' => ($r["DictionariesID"] ?? 0),
+                    'Parent_DictionariesID' => ($r['Parent_DictionariesID'] ?? $r['parent_dictionariesid'] ?? 0),
                     'Parent_DictionaryName' => ($r["Parent_DictionaryName"] ?? ''),
                     'Parent_ValueID'        => ($r["Parent_ValueID"] ?? 0),
                     'DictionaryName'        => ($r['DictionaryName'] ?? ''),

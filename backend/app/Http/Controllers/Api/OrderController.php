@@ -11,6 +11,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\CreateOrderRequest;
 use App\Services\Order\OrderApplicationService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class OrderController extends Controller
@@ -57,6 +58,25 @@ class OrderController extends Controller
                 'code'    => 'order_data_error',
                 'detail'  => $e->getMessage(),
             ], 500);
+        }
+
+        // ── Kontrola własności (anty-IDOR) ────────────────────────────────────
+        // Zapisać można tylko siebie lub potwierdzoną osobę powiązaną; płatnikiem
+        // może być tylko zalogowany lub jego powiązanie. Inaczej można by zapisać
+        // dowolną osobę albo obciążyć obcego płatnika.
+        $authUserId  = (int) $request->user()->getKey();
+        $participant = $data->participantUsersId ?: $authUserId;
+        if (!$this->ownsOrRelated($authUserId, $participant)) {
+            return response()->json([
+                'message' => 'Nie możesz zapisać tej osoby na zajęcia.',
+                'code'    => 'forbidden_participant',
+            ], 403);
+        }
+        if (!$this->ownsOrRelated($authUserId, (int) $data->payerUserId)) {
+            return response()->json([
+                'message' => 'Nieprawidłowy płatnik zamówienia.',
+                'code'    => 'forbidden_payer',
+            ], 403);
         }
 
         try {
@@ -110,5 +130,34 @@ class OrderController extends Controller
         return response()->json([
             'data' => $result->toArray(),
         ], $httpStatus);
+    }
+
+    /**
+     * Czy $targetUserId to zalogowany lub jego potwierdzona osoba powiązana
+     * (rodzic↔dziecko, dowolny kierunek, aktywna relacja).
+     */
+    private function ownsOrRelated(int $authUserId, int $targetUserId): bool
+    {
+        if ($targetUserId <= 0) {
+            return false;
+        }
+        if ($targetUserId === $authUserId) {
+            return true;
+        }
+        // Zalogowany jest rodzicem/opiekunem celu.
+        $asGuardian = DB::table('usersrelations')
+            ->where('Parent_UsersID', $authUserId)
+            ->where('UsersID', $targetUserId)
+            ->where('Cancelled', 0)
+            ->exists();
+        if ($asGuardian) {
+            return true;
+        }
+        // Cel jest rodzicem/opiekunem zalogowanego (np. płatnik-rodzic).
+        return DB::table('usersrelations')
+            ->where('Parent_UsersID', $targetUserId)
+            ->where('UsersID', $authUserId)
+            ->where('Cancelled', 0)
+            ->exists();
     }
 }
