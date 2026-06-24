@@ -22,6 +22,9 @@ class CrmSyncService
 
     private CrmClient $crm;
 
+    /** Cache zbioru kolumn per tabela (lowercase) — 1 zapytanie na tabelę na run. */
+    private array $tableColumnsCache = [];
+
     public function __construct(CrmClient $crm)
     {
         $this->crm = $crm;
@@ -648,6 +651,10 @@ class CrmSyncService
             $fields = $this->sanitizeRecord($fieldMap($this->normalizeIncomingRecord($r, $config)));
             $this->assertRequiredFields($fields, $config);
             $fields = $this->withoutPrimaryKeyAliases($fields, $config);
+            // Odfiltruj klucze nieistniejące w tabeli docelowej — chroni joby
+            // raw-passthrough (SELECT alias.*) przed „Unknown column" → poison,
+            // gdy CRM doda kolumnę nieobecną w bazie mobilnej.
+            $fields = $this->filterToTableColumns($modelClass, $fields);
 
             $model = $modelClass::updateOrCreate(
                 [$primaryKey => $id],
@@ -658,6 +665,47 @@ class CrmSyncService
                 ($config['afterSave'])($r, $model);
             }
         });
+    }
+
+    /**
+     * Zostawia tylko te klucze $fields, które odpowiadają istniejącym kolumnom
+     * tabeli docelowej (porównanie case-insensitive). Klucze spoza schematu są
+     * pomijane — zamiast wywalać insert „Unknown column" (poison) przy dryfcie
+     * schematu CRM. Jeśli schematu nie da się odczytać, zwraca pola bez zmian.
+     */
+    private function filterToTableColumns(string $modelClass, array $fields): array
+    {
+        try {
+            $table = (new $modelClass())->getTable();
+        } catch (\Throwable $e) {
+            return $fields;
+        }
+
+        if (!array_key_exists($table, $this->tableColumnsCache)) {
+            try {
+                $cols = \Illuminate\Support\Facades\Schema::getColumnListing($table);
+                $set = [];
+                foreach ($cols as $c) {
+                    $set[strtolower($c)] = true;
+                }
+                $this->tableColumnsCache[$table] = $set;
+            } catch (\Throwable $e) {
+                $this->tableColumnsCache[$table] = []; // nieznany schemat → nie filtruj
+            }
+        }
+
+        $set = $this->tableColumnsCache[$table];
+        if (empty($set)) {
+            return $fields;
+        }
+
+        $out = [];
+        foreach ($fields as $k => $v) {
+            if (isset($set[strtolower((string) $k)])) {
+                $out[$k] = $v;
+            }
+        }
+        return $out;
     }
 
     /**

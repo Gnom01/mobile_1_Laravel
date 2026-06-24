@@ -594,9 +594,20 @@ class WorkshopController extends Controller
         $finalTotal = round($rawTotal - $discountAmount, 2);
 
         // 7. Save selection via CRM getEuWorkshopGroupPrices
-        // Idempotencja: użyj guida przysłanego przez klienta (ten sam przy retry/
-        // podwójnym tapnięciu → CRM dedupuje po guid), inaczej wygeneruj nowy.
+        // Idempotencja: użyj guida przysłanego przez klienta, inaczej wygeneruj nowy.
         $trackingId = (string) ($request->input('guid') ?: Str::uuid());
+
+        // CRM createOrder NIE jest idempotentny → atomowy zamek po guid blokuje
+        // duplikat (double-tap/retry) na 10 min. Przy błędzie zamek jest zwalniany
+        // (patrz catch/return niżej), by nieudana próba nie blokowała ponowienia.
+        $idemGuid = trim((string) $request->input('guid', ''));
+        if ($idemGuid !== '' && !\Illuminate\Support\Facades\Cache::add("ws-checkout:{$idemGuid}", 1, now()->addMinutes(10))) {
+            return response()->json([
+                'success' => false,
+                'message' => 'To zamówienie jest już przetwarzane. Sprawdź listę płatności.',
+                'code'    => 'order_already_processing',
+            ], 409);
+        }
         $productsLevel2DVID = $type === 'ygm' ? 55 : 56;
 
         $savePayload = [
@@ -616,6 +627,7 @@ class WorkshopController extends Controller
         try {
             $crmClient->calculateWorkshopPricing($savePayload, $trackingId);
         } catch (\Exception $e) {
+            if ($idemGuid !== '') \Illuminate\Support\Facades\Cache::forget("ws-checkout:{$idemGuid}");
             return response()->json([
                 'success' => false,
                 'message' => 'Błąd zapisu koszyka w CRM: ' . $e->getMessage()
@@ -657,12 +669,14 @@ class WorkshopController extends Controller
                 ]);
             }
 
+            if ($idemGuid !== '') \Illuminate\Support\Facades\Cache::forget("ws-checkout:{$idemGuid}");
             return response()->json([
                 'success' => false,
                 'message' => 'Nie udało się wygenerować linku płatności.',
             ], 500);
 
         } catch (\Exception $e) {
+            if ($idemGuid !== '') \Illuminate\Support\Facades\Cache::forget("ws-checkout:{$idemGuid}");
             return response()->json([
                 'success' => false,
                 'message' => 'Błąd procesowania płatności: ' . $e->getMessage()

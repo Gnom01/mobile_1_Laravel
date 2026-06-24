@@ -20,7 +20,10 @@ class PullTicketsJob implements ShouldQueue
             'endpoint'      => '/CrmToMobileSync/getTicketListData',
             'model'         => Ticket::class,
             'primaryKey'    => 'crm_id',
-            'apiPrimaryKey' => 'coursesHeadingsID',
+            // Endpoint zwraca rekordy kluczowane eventsTicketsID — wcześniej upsert
+            // po coursesHeadingsID zlepiał wiele biletów w jeden wiersz (utrata) i
+            // psuł kursor paginacji. Klucz musi być rzeczywistym PK rekordu.
+            'apiPrimaryKey' => 'eventsTicketsID',
             'pageSize'      => 500,
             'responseKey'   => 'body',
             'extraParams'   => [

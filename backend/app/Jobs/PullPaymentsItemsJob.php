@@ -30,7 +30,7 @@ class PullPaymentsItemsJob implements ShouldQueue
                     'clientsID'                   => (int)($r['clientsID'] ?? 0),
                     'localizationsID'            => (int)($r['localizationsID'] ?? 0),
                     'usersID'                    => (int)($r['usersID'] ?? 0),
-                    'payer_usersID'              => (int)($r['payer_usersID'] ?? 0),
+                    'payer_usersID'              => (int)($r['payer_UsersID'] ?? $r['payer_usersID'] ?? 0),
                     'usersBasketsID'             => (int)($r['usersBasketsID'] ?? 0),
                     'usersPaymentsSchedulesID'   => (int)($r['usersPaymentsSchedulesID'] ?? 0),
                     'contractsID'                => (int)($r['contractsID'] ?? 0),

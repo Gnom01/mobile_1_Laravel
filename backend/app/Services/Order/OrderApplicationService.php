@@ -111,6 +111,13 @@ class OrderApplicationService
             } else {
                 $crmBody = CrmOrderPayloadBuilder::build($orderRequest->payload_json, $data->guid, $data->userId, $defaultLocId, $data->participantUsersId);
             }
+
+            // Zero-trust: bez poprawnego produktu/kursu zamówienie to śmieć
+            // (cichy kontrakt na 0 zł). Odrzuć, zamiast tworzyć go w CRM.
+            if ((int) ($crmBody['productsID'] ?? 0) <= 0 || (int) ($crmBody['coursesHeadingsID'] ?? 0) <= 0) {
+                throw new CrmOrderException('Niekompletne dane oferty (brak produktu/kursu).', 422, ['invalid_offer']);
+            }
+
             $crmResponse = $this->crmClient->createOrder($crmBody, $data->guid);
         } catch (CrmOrderException | CrmIntegrationException $e) {
             // ── Step 7: CRM failure ───────────────────────────────────────────
