@@ -1,0 +1,161 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\CalendarController;
+use App\Http\Controllers\Api\ClientController;
+use App\Http\Controllers\Api\CheckoutController;
+use App\Http\Controllers\Api\ContractController;
+use App\Http\Controllers\Api\CourseController;
+use App\Http\Controllers\Api\CrmUserController;
+use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\Api\ScheduleChangesController;
+use App\Http\Controllers\Api\UsersRelationsController;
+use App\Http\Controllers\Api\DictionaryController;
+use App\Http\Controllers\Api\PdfController;
+use App\Http\Controllers\Api\PricingController;
+use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\WorkshopController;
+use App\Http\Controllers\Api\CampController;
+use App\Http\Controllers\Api\DayCampController;
+use App\Http\Controllers\Api\TicketController;
+use App\Http\Controllers\Api\MobilePushController;
+use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\InstructorController;
+use App\Http\Controllers\Api\InstructorChatController;
+use App\Http\Controllers\Api\ContactController;
+
+// ───────────────────────────────────────────────
+// Mobile data query routes (require authentication)
+// ───────────────────────────────────────────────
+Route::middleware('auth:sanctum')->group(function () {
+
+    // Clients
+    Route::get('/clients', [ClientController::class, 'index']);
+    Route::put('/clients/{id}', [ClientController::class, 'update']);
+
+    // Users
+    Route::post('/users/{guid}/credentials', [CrmUserController::class, 'updateCredentials']);
+    Route::put('/users/{id}', [CrmUserController::class, 'update']);
+
+    // Payments
+    Route::get('/payments/schedule', [PaymentController::class, 'getSchedule']);
+    Route::get('/payments/history/{parentGuid}', [PaymentController::class, 'getPaymentHistory']);
+
+    // Contracts
+    Route::get('/contracts/{parentGuid}', [ContractController::class, 'getContracts']);
+    Route::post('/checkout/schedule/start', [CheckoutController::class, 'startScheduleCheckout']);
+    Route::post('/checkout/{checkoutSession}/refresh', [CheckoutController::class, 'refreshStatus']);
+
+    // Relations
+    Route::get('/users-relations/{parentGuid}', [UsersRelationsController::class, 'getRelatedUsers']);
+    Route::post('/users-relations', [UsersRelationsController::class, 'store']);
+
+    // Calendar
+    Route::get('/calendar/people/{parentGuid}', [CalendarController::class, 'getPeople']);
+    Route::get('/calendar/month/{parentGuid}', [CalendarController::class, 'getMonthSummary']);
+    Route::get('/calendar/day/{parentGuid}', [CalendarController::class, 'getDayEvents']);
+
+    // Schedule changes
+    Route::get('/schedule-changes/missed/{parentGuid}', [ScheduleChangesController::class, 'getMissedLessons']);
+    Route::get('/schedule-changes/workoffs/{parentGuid}', [ScheduleChangesController::class, 'getWorkoffLessons']);
+
+    // Dictionaries & courses
+    Route::get('/dictionaries', [DictionaryController::class, 'index']);
+    Route::get('/dictionaries/courses', [DictionaryController::class, 'getCoursesDictionaries']);
+    Route::get('/courses/dictionaries', [DictionaryController::class, 'getCoursesDictionaries']);
+    Route::get('/dictionaries/camps',   [DictionaryController::class, 'getCampDictionaries']);
+    Route::get('/camps/dictionaries',   [DictionaryController::class, 'getCampDictionaries']);
+
+    // Courses search
+    Route::post('/courses/search', [CourseController::class, 'search']);
+
+    // PDF generation
+    Route::post('/pdf/generate', [PdfController::class, 'generate']);
+    Route::post('/pdf/preview',  [PdfController::class, 'preview']);
+
+    // Pricing
+    Route::get('/pricing/course/{coursesHeadingsID}', [PricingController::class, 'getPriceByCourseHeadingsID']);
+    Route::post('/GetPriceByCourseHeadingsID', [PricingController::class, 'getPrice']);
+    Route::get('/pricing/entry-fee', [PricingController::class, 'checkEntryFee']);
+
+    // Orders (CRM-first)
+    Route::post('/orders', [OrderController::class, 'store']);
+    Route::post('/orders/camps', [OrderController::class, 'store']);
+    Route::post('/orders/day-camps', [OrderController::class, 'store']);
+    Route::post('/orders/workshops', [OrderController::class, 'store']);
+    Route::post('/orders/tickets', [OrderController::class, 'store']);
+
+
+    // Instructor (grupy + komunikaty push)
+    Route::get('/instructor/groups', [InstructorController::class, 'groups']);
+    Route::get('/instructor/groups/{groupId}/participants', [InstructorController::class, 'participants']);
+    Route::get('/instructor/participants/{userId}/relations', [InstructorController::class, 'participantRelations']);
+    Route::get('/instructor/participants', [InstructorController::class, 'allParticipants']);
+    Route::post('/instructor/messages', [InstructorController::class, 'sendMessage']);
+    Route::get('/instructor/messages', [InstructorController::class, 'messages']);
+
+    // Instructor — harmonogram
+    Route::get('/instructor/schedule', [InstructorController::class, 'schedule']);
+
+    // Instructor — zmiany w harmonogramie (multiselect typ + grupy + data)
+    Route::get('/instructor/change-types', [InstructorController::class, 'changeTypes']);
+    Route::get('/instructor/schedule-changes', [InstructorController::class, 'scheduleChanges']);
+    Route::post('/instructor/schedule-changes', [InstructorController::class, 'storeScheduleChange']);
+
+    // Instructor — zgłoszenia
+    Route::get('/instructor/report-types', [InstructorController::class, 'reportTypes']);
+    Route::get('/instructor/reports', [InstructorController::class, 'reports']);
+    Route::post('/instructor/reports', [InstructorController::class, 'storeReport']);
+
+    // Instructor — ogłoszenia (blok na pulpicie)
+    Route::get('/instructor/announcements', [InstructorController::class, 'announcements']);
+
+    // Instructor — czaty grupowe (multiselect uczestników, nazwany czat)
+    Route::get('/instructor/chats', [InstructorChatController::class, 'index']);
+    Route::post('/instructor/chats', [InstructorChatController::class, 'store']);
+    Route::get('/instructor/chats/{chatId}/messages', [InstructorChatController::class, 'messages']);
+    Route::post('/instructor/chats/{chatId}/messages', [InstructorChatController::class, 'send']);
+
+    // Kontakt / czat uczestnik ↔ instruktor (z dostępem rodzica do wątków dzieci)
+    Route::get('/contact/participants', [ContactController::class, 'participants']);
+    Route::get('/contact/me', [ContactController::class, 'me']);
+    Route::get('/contact/threads', [ContactController::class, 'threads']);
+    Route::get('/contact/conversation', [ContactController::class, 'conversation']);
+    Route::post('/contact/messages', [ContactController::class, 'send']);
+
+    // Push notifications
+    Route::get('/mobile/dashboard/banners', [DashboardController::class, 'banners']);
+    Route::post('/mobile/device-tokens', [MobilePushController::class, 'registerDeviceToken']);
+    Route::delete('/mobile/device-tokens/{token}', [MobilePushController::class, 'deleteDeviceToken']);
+    Route::get('/mobile/notifications', [MobilePushController::class, 'index']);
+    Route::get('/mobile/notifications/unread-count', [MobilePushController::class, 'unreadCount']);
+    Route::get('/mobile/notifications/{id}', [MobilePushController::class, 'show']);
+    Route::post('/mobile/notifications/{id}/read', [MobilePushController::class, 'markRead']);
+    Route::post('/mobile/notifications/{id}/opened', [MobilePushController::class, 'markOpened']);
+    Route::post('/mobile/notifications/read-all', [MobilePushController::class, 'readAll']);
+
+    // ─── Offer sections ─────────────────────────────
+    // Workshops Pricing & Checkout Wizards
+    Route::post('/offers/workshops/calculate-pricing', [WorkshopController::class, 'calculatePricing']);
+    Route::post('/orders/workshops/checkout',          [WorkshopController::class, 'checkout']);
+
+    // Workshops YGM
+    Route::get('/offers/workshops/ygm',          [WorkshopController::class, 'indexYgm']);
+    Route::get('/offers/workshops/ygm/{id}',     [WorkshopController::class, 'showYgm']);
+    // Workshops European
+    Route::get('/offers/workshops/european',     [WorkshopController::class, 'indexEuropean']);
+    Route::get('/offers/workshops/european/{id}',[WorkshopController::class, 'showEuropean']);
+    // Camps
+    Route::get('/offers/camps',                  [CampController::class, 'index']);
+    Route::get('/offers/camps/{id}',             [CampController::class, 'show']);
+    // Day camps (półkolonie)
+    Route::get('/offers/day-camps',              [DayCampController::class, 'index']);
+    Route::get('/offers/day-camps/{id}',         [DayCampController::class, 'show']);
+    // Tickets
+    Route::get('/offers/tickets',                [TicketController::class, 'index']);
+    Route::get('/offers/tickets/{id}',           [TicketController::class, 'show']);
+    // Pricing
+    Route::get('/pricing/camp/{id}',             [CampController::class, 'pricing']);
+    Route::get('/pricing/day-camp/{id}',         [DayCampController::class, 'pricing']);
+    Route::get('/pricing/ticket/{id}',           [TicketController::class, 'pricing']);
+});

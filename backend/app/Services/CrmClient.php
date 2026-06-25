@@ -9,12 +9,32 @@ class CrmClient
 {
     public function __construct(private CrmAuthService $auth) {}
 
+    private function httpClient(string $token)
+    {
+        $client = Http::baseUrl(config('services.crm.base_url'))
+            ->withToken($token)
+            ->withOptions([
+                'verify' => (bool) config('services.crm.verify_tls', true),
+            ])
+            ->timeout(20);
+
+        // Shared secret that authorizes the mobile-sync endpoints on the CRM
+        // side (in addition to the JWT). Without it the CRM rejects the call.
+        $syncToken = config('services.crm.mobile_sync_token');
+        if (!empty($syncToken)) {
+            $client = $client->withHeaders(['X-Mobile-Sync-Token' => $syncToken]);
+        }
+
+        return $client;
+    }
+
     public function get(string $url, array $query = [])
     {
         return $this->request('get', $url, $query);
     }
 
     public function post(string $url, array $data = [])
+    
     {
         return $this->request('post', $url, $data);
     }
@@ -33,12 +53,10 @@ class CrmClient
     {
         $token = $this->auth->getAccessToken();
 
-        $http = Http::baseUrl(config('services.crm.base_url'))
-            ->withToken($token)
-            ->timeout(20);
+        $http = $this->httpClient($token);
 
         $fullUrl = config('services.crm.base_url') . $url;
-        \Illuminate\Support\Facades\Log::info("CrmClient: {$method} {$fullUrl}", ['payload' => $payload]);
+        // \Illuminate\Support\Facades\Log::info("CrmClient: {$method} {$fullUrl}", ['payload' => $payload]);
 
         $resp = $http->{$method}($url, $payload);
 
@@ -47,10 +65,7 @@ class CrmClient
             CrmToken::query()->delete();
             $token2 = $this->auth->getAccessToken();
 
-            $resp = Http::baseUrl(config('services.crm.base_url'))
-                ->withToken($token2)
-                ->timeout(20)
-                ->{$method}($url, $payload);
+            $resp = $this->httpClient($token2)->{$method}($url, $payload);
         }
 
         return $resp->throw();

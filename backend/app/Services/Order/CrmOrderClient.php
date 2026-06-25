@@ -1,0 +1,437 @@
+<?php
+
+namespace App\Services\Order;
+
+use App\Data\Order\CrmOrderResponse;
+use App\Data\Order\CrmOrderSnapshot;
+use App\Exceptions\Order\CrmIntegrationException;
+use App\Exceptions\Order\CrmOrderException;
+use App\Models\CrmApiLog;
+use App\Services\CrmAuthService;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+
+class CrmOrderClient
+{
+    private string $baseUrl;
+    private string $ordersEndpoint;
+    private CrmAuthService $auth;
+
+    public function __construct(CrmAuthService $auth)
+    {
+        $this->auth           = $auth;
+        $this->baseUrl        = rtrim((string) config('services.crm.portal_base_url', config('services.crm.base_url', 'http://localhost/eds-web/API')), '/');
+        $this->ordersEndpoint = (string) config('services.crm.portal_orders_endpoint', '/Orders/createOrder');
+    }
+
+    // ─── Public API ────────────────────────────────────────────────────────────
+
+    /**
+     * Create an order in CRM.
+     * Retries 2 times on 502/503/504 and connection errors.
+     *
+     * @throws CrmOrderException       on 4xx (business error)
+     * @throws CrmIntegrationException on 5xx / network failure
+     */
+    public function createOrder(array $crmBody, string $guid): CrmOrderResponse
+    {
+        $endpoint    = $this->ordersEndpoint;
+        $safePayload = $this->sanitizePayload($crmBody);
+
+        // CRM /Orders/createOrder expects a flat JSON body (no envelope wrapper)
+        // allowRetry=false: CRM createOrder is NOT idempotent (guid check uses usersBaskets
+        // which is written at the END of the flow), so retries create duplicate contracts.
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $crmBody, $guid, false);
+
+        // CRM may prepend PHP notices (HTML) before the JSON — extract the JSON part
+        $parsed  = $this->extractCrmJson($rawBody);
+        $crmStatus = (int) ($parsed['status'] ?? $httpStatus);
+        $orderData = is_array($parsed['body'] ?? null) ? $parsed['body'] : ($parsed ?? []);
+
+        $this->logRequest($guid, $endpoint, 'POST', $safePayload, $parsed, $httpStatus, $durationMs, $error);
+
+        if ($error !== null) {
+            throw new CrmIntegrationException("CRM connection error: {$error}", 0);
+        }
+
+        if ($httpStatus >= 500) {
+            throw new CrmIntegrationException(
+                "CRM server error {$httpStatus}",
+                $httpStatus
+            );
+        }
+
+        // CRM often returns HTTP 200 with status:4xx inside JSON body (business-level error)
+        if ($crmStatus >= 400 && $crmStatus < 500) {
+            throw new CrmOrderException(
+                $this->extractErrorMessage($parsed, $crmStatus),
+                $crmStatus,
+                $parsed
+            );
+        }
+
+        if ($crmStatus >= 500) {
+            throw new CrmIntegrationException(
+                "CRM server error {$crmStatus}",
+                $crmStatus
+            );
+        }
+
+        return CrmOrderResponse::fromArray($orderData);
+    }
+
+    /**
+     * Fetch a full order snapshot from CRM by contractsID.
+     * Used by SyncOrderJob for retry without re-creating.
+     *
+     * @throws CrmOrderException
+     * @throws CrmIntegrationException
+     */
+    public function fetchOrderByContractId(int $contractsId, string $guid = ''): CrmOrderSnapshot
+    {
+        $endpoint = "/Orders/GetOrderSnapshot/{$contractsId}";
+
+        [$body, $status, $durationMs, $error] = $this->executeWithRetry('GET', $endpoint, [], $guid);
+
+        $safeBody = $this->sanitizeResponse($body);
+        $this->logRequest($guid, $endpoint, 'GET', [], $safeBody, $status, $durationMs, $error);
+
+        if ($error !== null) {
+            throw new CrmIntegrationException("CRM connection error: {$error}", 0);
+        }
+
+        if ($status >= 400 && $status < 500) {
+            throw new CrmOrderException(
+                $this->extractErrorMessage($body, $status),
+                $status
+            );
+        }
+
+        if ($status >= 500) {
+            throw new CrmIntegrationException("CRM server error {$status}", $status);
+        }
+
+        return CrmOrderSnapshot::fromArray($body);
+    }
+
+    /**
+     * Fetch payment schedules for an existing contract.
+     * Called after createOrder to get the usersPaymentsSchedulesID list needed
+     * to initiate the online payment step.
+     */
+    public function fetchPaymentSchedules(
+        int    $contractsId,
+        int    $usersId,
+        int    $localizationsId,
+        string $guid
+    ): ?array {
+        $endpoint = '/Orders/CalculateProductForUser';
+        $payload  = [
+            'keyController'           => 'paymentByContractsID',
+            'contractsID'             => $contractsId,
+            'usersID'                 => $usersId,
+            'current_LocalizationsID' => $localizationsId,
+        ];
+
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, true);
+        $body = $this->parseCrmBodyResponse($rawBody['__raw'] ?? '');
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($body), $httpStatus, $durationMs, $error);
+
+        if ($error !== null || $httpStatus >= 400) {
+            Log::warning('CRM fetchPaymentSchedules failed', [
+                'contractsId' => $contractsId,
+                'error'       => $error,
+                'httpStatus'  => $httpStatus,
+            ]);
+            return null;
+        }
+
+        $crmStatus = (int) ($body['status'] ?? 200);
+        if ($crmStatus >= 400) {
+            Log::warning('CRM fetchPaymentSchedules business error', [
+                'crmStatus' => $crmStatus,
+                'message'   => $body['message'] ?? '',
+            ]);
+            return null;
+        }
+
+        return $body;
+    }
+
+    /**
+     * Initiate online payment for given schedule IDs (P24 / PayNow).
+     * CRM calls OnLineSchedulePayment which registers the transaction and returns a token.
+     *
+     * $scheduleIds — usersPaymentsSchedulesID values from fetchPaymentSchedules
+     * Returns ['token' => '...', 'sessionID' => '...', 'html' => '...'] or null on failure.
+     */
+    public function initiateOnlinePayment(
+        array  $scheduleIds,
+        int    $usersId,
+        int    $localizationsId,
+        int    $paymentMethodsDvid,
+        string $returnUrl,
+        string $guid
+    ): ?array {
+        $endpoint = '/Orders/CalculateProductForUser';
+
+        // CRM OnLineSchedulePayment parses "x/usersID/scheduleID" per entry, comma-separated
+        $schedulesParam = implode(',', array_map(
+            fn (int $id) => "0/{$usersId}/{$id}",
+            $scheduleIds
+        ));
+
+        $payload = [
+            'keyController'            => 'onLineSchedulePayment',
+            'usersPaymentsSchedulesID' => $schedulesParam,
+            'usersID'                  => $usersId,
+            'current_LocalizationsID'  => $localizationsId,
+            'paymentMethodsDVID'       => $paymentMethodsDvid,
+            'urlLink'                  => $returnUrl,
+            'NIP'                      => '',
+        ];
+
+        // allowRetry=false: creating a payment is not idempotent
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, false);
+        $body = $this->parseCrmBodyResponse($rawBody['__raw'] ?? '');
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($body), $httpStatus, $durationMs, $error);
+
+        if ($error !== null || $httpStatus >= 400) {
+            Log::warning('CRM initiateOnlinePayment failed', [
+                'guid'       => $guid,
+                'error'      => $error,
+                'httpStatus' => $httpStatus,
+            ]);
+            return null;
+        }
+
+        $crmStatus = (int) ($body['status'] ?? 200);
+        if ($crmStatus >= 400) {
+            Log::warning('CRM initiateOnlinePayment business error', [
+                'crmStatus' => $crmStatus,
+                'message'   => $body['message'] ?? '',
+            ]);
+            return null;
+        }
+
+        return $body;
+    }
+
+    /**
+     * Calculate or set workshop pricing/selection in CRM via CalculateProductForUser.
+     */
+    public function calculateWorkshopPricing(array $payload, string $guid = ''): array
+    {
+        $endpoint = '/Orders/CalculateProductForUser';
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, true);
+        $body = $this->parseCrmBodyResponse($rawBody['__raw'] ?? '');
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($body), $httpStatus, $durationMs, $error);
+
+        if ($error !== null || $httpStatus >= 400) {
+            Log::warning('CRM calculateWorkshopPricing failed', [
+                'guid'       => $guid,
+                'error'      => $error,
+                'httpStatus' => $httpStatus,
+            ]);
+            throw new \Exception("Błąd połączenia z CRM przy kalkulacji ceny: {$error}");
+        }
+
+        return $body;
+    }
+
+    // ─── Internal ──────────────────────────────────────────────────────────────
+
+    /**
+     * @param  bool  $allowRetry  Set to false for non-idempotent POST calls (createOrder)
+     *                            to avoid duplicate records when CRM is slow.
+     * @return array{array, int, int, string|null}  [body, httpStatus, durationMs, errorMessage]
+     */
+    private function executeWithRetry(string $method, string $endpoint, array $payload, string $guid, bool $allowRetry = true): array
+    {
+        $token     = $this->resolveToken();
+        $url       = $this->baseUrl . $endpoint;
+        $startedAt = hrtime(true);
+        $error     = null;
+        $status    = 0;
+        $body      = [];
+
+        try {
+            $http = Http::timeout(30)->withToken($token);
+            if (!config('services.crm.verify_tls', true)) {
+                $http = $http->withoutVerifying();
+            }
+            if ($allowRetry) {
+                $http = $http->retry(2, 1000, function (\Throwable $exception, $response): bool {
+                    if ($exception instanceof ConnectionException) {
+                        return true;
+                    }
+                    if ($response && in_array($response->status(), [502, 503, 504], true)) {
+                        return true;
+                    }
+                    return false;
+                }, false);
+            }
+
+            switch (strtoupper($method)) {
+                case 'POST':
+                    $response = $http->post($url, $payload);
+                    break;
+                case 'GET':
+                    $response = $http->get($url);
+                    break;
+                default:
+                    $response = $http->send($method, $url, ['json' => $payload]);
+                    break;
+            }
+
+            $status = $response->status();
+            // Response may contain HTML (PHP notices) + JSON — store raw for parsing later
+            $rawResponseBody = $response->body();
+            $body   = ['__raw' => $rawResponseBody];
+
+            Log::debug('[CRM RAW] żądanie do CRM', [
+                'guid'     => $guid,
+                'method'   => $method,
+                'url'      => $url,
+                'payload'  => $payload,
+            ]);
+            Log::debug('[CRM RAW] odpowiedź z CRM', [
+                'guid'       => $guid,
+                'url'        => $url,
+                'httpStatus' => $status,
+                'body'       => $rawResponseBody,
+            ]);
+        } catch (ConnectionException $e) {
+            $error = $e->getMessage();
+        } catch (\Throwable $e) {
+            $error = $e->getMessage();
+        }
+
+        $durationMs = (int) round((hrtime(true) - $startedAt) / 1_000_000);
+
+        return [$body, $status, $durationMs, $error];
+    }
+
+    /**
+     * Parse CRM response body using first-occurrence of '{'.
+     * Unlike extractCrmJson (which uses strrpos and is safe for simple flat responses),
+     * this method correctly handles nested arrays like instalmets/contracts.
+     * Returns the inner 'body' if the CRM envelope is detected, otherwise the decoded object.
+     */
+    private function parseCrmBodyResponse(string $rawBody): array
+    {
+        if ($rawBody === '') {
+            return [];
+        }
+        $rawBody    = ltrim($rawBody, "\xEF\xBB\xBF");
+        $firstBrace = strpos($rawBody, '{');
+        if ($firstBrace === false) {
+            return [];
+        }
+        $decoded = json_decode(substr($rawBody, $firstBrace), true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+        // CRM envelope: { status, message, token, body: {...} }
+        if (isset($decoded['body']) && is_array($decoded['body'])) {
+            return $decoded['body'];
+        }
+        return $decoded;
+    }
+
+    /**
+     * CRM sometimes prepends PHP notices (HTML) before the JSON response.
+     * Extracts and decodes the JSON from the raw response body.
+     * Returns the full CRM envelope (status, message, token, body, …).
+     */
+    private function extractCrmJson(array $raw): array
+    {
+        $rawBody = $raw['__raw'] ?? '';
+        if (!is_string($rawBody) || $rawBody === '') {
+            return is_array($raw) && !isset($raw['__raw']) ? $raw : [];
+        }
+
+        // Strip UTF-8 BOM
+        $rawBody = ltrim($rawBody, "\xEF\xBB\xBF");
+
+        // Find the first '{' — start of the CRM JSON envelope (skips any leading PHP notices/HTML)
+        $jsonStart = strpos($rawBody, '{');
+        if ($jsonStart !== false) {
+            $decoded = json_decode(substr($rawBody, $jsonStart), true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return [];
+    }
+
+    private function resolveToken(): string
+    {
+        // Delegates to CrmAuthService which handles: cache check → refresh → re-login
+        return $this->auth->getAccessToken();
+    }
+
+    private function logRequest(
+        string $guid,
+        string $endpoint,
+        string $method,
+        array  $requestPayload,
+        array  $responseBody,
+        int    $httpStatus,
+        int    $durationMs,
+        ?string $error
+    ): void {
+        try {
+            CrmApiLog::create([
+                'guid'          => $guid ?: null,
+                'endpoint'      => $endpoint,
+                'method'        => $method,
+                'request_json'  => $requestPayload,
+                'response_json' => $this->sanitizeResponse($responseBody),
+                'http_status'   => $httpStatus ?: null,
+                'duration_ms'   => $durationMs,
+                'error_message' => $error,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Failed to write CRM API log', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Remove auth tokens and sensitive PII from outgoing request before logging.
+     */
+    private function sanitizePayload(array $payload): array
+    {
+        $redactKeys = ['password', 'token', 'Authorization', 'pesel', 'identityNumber'];
+        array_walk_recursive($payload, static function (&$value, string $key) use ($redactKeys): void {
+            if (in_array($key, $redactKeys, true)) {
+                $value = '[REDACTED]';
+            }
+        });
+        return $payload;
+    }
+
+    /**
+     * Strip payment tokens from response before logging.
+     */
+    private function sanitizeResponse(array $response): array
+    {
+        $redactKeys = ['paymentToken', 'token', 'access_token', 'refresh_token'];
+        array_walk_recursive($response, static function (&$value, string $key) use ($redactKeys): void {
+            if (in_array($key, $redactKeys, true)) {
+                $value = '[REDACTED]';
+            }
+        });
+        return $response;
+    }
+
+    private function extractErrorMessage(array $body, int $status): string
+    {
+        return $body['message']
+            ?? $body['error']
+            ?? $body['title']
+            ?? "CRM returned HTTP {$status}";
+    }
+}
