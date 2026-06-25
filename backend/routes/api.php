@@ -1,14 +1,11 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
+// ───────────────────────────────────────────────
+// API route entry point — split into sub-files:
+//   api/auth.php   → authentication & user account
+//   api/mobile.php → data queries for mobile devices
+// ───────────────────────────────────────────────
 
-
-
-use App\Http\Controllers\Api\ClientController;
-use App\Http\Controllers\Api\CrmUserController;
-
-Route::get('/clients', [ClientController::class, 'index']);
-Route::put('/clients/{id}', [ClientController::class, 'update']);
-
-Route::get('/users', [CrmUserController::class, 'index']);
-Route::put('/users/{id}', [CrmUserController::class, 'update']);
+require __DIR__ . '/api/auth.php';
+require __DIR__ . '/api/mobile.php';
+require __DIR__ . '/api/crm.php';

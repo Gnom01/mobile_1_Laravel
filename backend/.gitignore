@@ -1,28 +1,33 @@
 *.log
 .DS_Store
+Thumbs.db
+
+# env / secrets
 .env
-.env.backup
-.env.production
-.phpactor.json
-.phpunit.result.cache
-/.fleet
+.env.*
+backend/.env
+.env.docker
+docker-compose.override.yml
+deploy.log
+/auth.json
+
+# IDE
 /.idea
-/.nova
-/.phpunit.cache
 /.vscode
 /.zed
-/auth.json
-/node_modules
+/.fleet
+/.nova
+.phpactor.json
+
+# Laravel / PHP
+/vendor
+.phpunit.result.cache
+/.phpunit.cache
 /public/build
 /public/hot
 /public/storage
 /storage/*.key
 /storage/pail
-/vendor
-Homestead.json
-Homestead.yaml
-Thumbs.db
-.env.docker
-backend/.env
-docker-compose.override.yml
-deploy.log
+
+# Node
+/node_modules

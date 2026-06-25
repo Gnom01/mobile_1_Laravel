@@ -12,37 +12,38 @@ class User extends Authenticatable
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var list<string>
-     */
+    protected $primaryKey = 'UsersID';
+
+    public $incrementing = false;
+
+    public $timestamps = false;
+
+    protected $keyType = 'int';
+
     protected $fillable = [
-        'name',
-        'email',
-        'password',
+        'UsersID',
+        'LastName',
+        'FirstName',
+        'Login',
+        'Email',
+        'Password',
     ];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var list<string>
-     */
     protected $hidden = [
-        'password',
+        'Password',
         'remember_token',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
+    /** Alias so code using ->id keeps working */
+    public function getIdAttribute(): int
+    {
+        return $this->UsersID;
+    }
+
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
-            'password' => 'hashed',
         ];
     }
 }

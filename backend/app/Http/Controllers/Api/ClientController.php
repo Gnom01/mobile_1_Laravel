@@ -10,10 +10,14 @@ class ClientController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        //
-        return \App\Models\Client::orderBy('ClientsID', 'desc')->paginate(50);
+        // Anty-BOLA: użytkownik widzi wyłącznie swojego klienta (firmę/szkołę),
+        // a nie listę wszystkich kontrahentów.
+        $clientsId = (int) ($request->user()->ClientsID ?? 0);
+        return \App\Models\Client::where('ClientsID', $clientsId)
+            ->orderBy('ClientsID', 'desc')
+            ->paginate(50);
     }
 
     /**
@@ -37,7 +41,10 @@ class ClientController extends Controller
      */
     public function update(Request $request, string $id)
     {
-        //
+        // Anty-IDOR: edycja tylko własnego klienta zalogowanego użytkownika.
+        $clientsId = (int) ($request->user()->ClientsID ?? 0);
+        abort_unless($clientsId > 0 && (int) $id === $clientsId, 403, 'Brak dostępu do tego klienta.');
+
         $client = \App\Models\Client::findOrFail($id);
 
         $data = $request->only([
@@ -46,6 +53,7 @@ class ClientController extends Controller
 
         $client->fill($data);
         $client->WhenUpdated = now();
+        
         $client->save();
 
         \App\Models\OutboxEvent::create([

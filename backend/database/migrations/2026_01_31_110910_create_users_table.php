@@ -107,7 +107,9 @@ return new class extends Migration
 
             $table->unique(['transferID'], 'UK_users_transferID');
             $table->index(['Email', 'Phone', 'FirstName', 'Cancelled'], 'Users_Email');
-            $table->fullText('globalFilerUsers', 'Users_globalFilerUsers');
+            if (\Illuminate\Support\Facades\DB::getDriverName() !== 'sqlite') {
+                $table->fullText('globalFilerUsers', 'Users_globalFilerUsers');
+            }
         });
     }
 

@@ -36,12 +36,50 @@ return [
     ],
 
     'crm' => [
-    'base_url' => env('CRM_BASE_URL'),
-    'login_endpoint' => env('CRM_LOGIN_ENDPOINT', '/auth/login'),
-    'refresh_endpoint' => env('CRM_REFRESH_ENDPOINT', '/auth/refresh'),
-    'username' => env('CRM_USERNAME'),
-    'password' => env('CRM_PASSWORD'),
-],
+        'base_url' => env('CRM_BASE_URL'),
+        'push_api_token' => env('CRM_PUSH_API_TOKEN'),
+        // Shared secret sent on every /CrmToMobileSync/* call so a random
+        // authenticated app user (valid JWT, no secret) cannot pull the data.
+        'mobile_sync_token' => env('CRM_MOBILE_SYNC_TOKEN'),
+        'login_endpoint' => env('CRM_LOGIN_ENDPOINT', '/auth/login'),
+        'refresh_endpoint' => env('CRM_REFRESH_ENDPOINT', '/auth/refresh'),
+        'username' => env('CRM_USERNAME'),
+        'password' => env('CRM_PASSWORD'),
+        'portal_base_url' => env('CRM_PORTAL_BASE_URL', env('CRM_BASE_URL')),
+        'portal_orders_endpoint'         => env('CRM_PORTAL_ORDERS_ENDPOINT', '/Orders/createOrder'),
+        'portal_order_snapshot_endpoint' => env('CRM_PORTAL_ORDER_SNAPSHOT_ENDPOINT', '/Orders/GetOrderSnapshot'),
+        'payment_token_url_template' => env('CRM_PAYMENT_TOKEN_URL_TEMPLATE', 'https://secure.przelewy24.pl/trnRequest/{token}'),
+        'mobile_checkout_return_url' => env('CRM_MOBILE_CHECKOUT_RETURN_URL', env('APP_URL')),
+        'verify_tls' => filter_var(
+            env('CRM_VERIFY_TLS', env('APP_ENV', 'production') !== 'local'),
+            FILTER_VALIDATE_BOOL,
+            FILTER_NULL_ON_FAILURE
+        ) ?? (env('APP_ENV', 'production') !== 'local'),
+    ],
 
+    'serwersms' => [
+        'token'  => env('SERWERSMS_TOKEN'),
+        'sender' => env('SERWERSMS_SENDER', null),
+    ],
+
+    'sms' => [
+        'app_hash' => env('SMS_APP_HASH', ''),
+        'test_mode' => filter_var(
+            env('SMS_TEST_MODE', env('APP_ENV', 'production') !== 'production'),
+            FILTER_VALIDATE_BOOL,
+            FILTER_NULL_ON_FAILURE
+        ) ?? (env('APP_ENV', 'production') !== 'production'),
+    ],
+
+    'firebase' => [
+        'project_id' => env('FIREBASE_PROJECT_ID'),
+        'server_key' => env('FIREBASE_SERVER_KEY'),
+        'credentials' => env('FIREBASE_CREDENTIALS'),
+        'allow_simulated' => filter_var(
+            env('FIREBASE_ALLOW_SIMULATED_PUSH', env('APP_ENV', 'production') === 'testing'),
+            FILTER_VALIDATE_BOOL,
+            FILTER_NULL_ON_FAILURE
+        ) ?? false,
+    ],
 
 ];
