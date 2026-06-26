@@ -41,6 +41,31 @@ jobs:
               docker compose --env-file .env "$@"
             }
 
+            set_env_value() {
+              local file="$1"
+              local key="$2"
+              local value="$3"
+
+              if grep -q "^${key}=" "$file"; then
+                sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+              else
+                printf '\n%s=%s\n' "$key" "$value" >> "$file"
+              fi
+            }
+
+            configure_laravel_dev_env() {
+              touch .env.docker
+              set_env_value .env.docker APP_ENV local
+              set_env_value .env.docker APP_DEBUG true
+              set_env_value .env.docker APP_URL https://dev-api.egurrola-app.pl
+              set_env_value .env.docker DB_CONNECTION mysql
+              set_env_value .env.docker DB_HOST mysql
+              set_env_value .env.docker DB_PORT 3306
+              set_env_value .env.docker DB_DATABASE app_dev
+              set_env_value .env.docker DB_USERNAME app
+              set_env_value .env.docker DB_PASSWORD app
+            }
+
             # .env is only for Docker Compose. Laravel settings stay in .env.docker.
             write_compose_env
 
@@ -71,9 +96,8 @@ jobs:
               fi
             fi
 
-            if [ ! -f backend/.env ]; then
-              cp .env.docker backend/.env || true
-            fi
+            configure_laravel_dev_env
+            cp .env.docker backend/.env
 
             echo "Building application image..."
             dc build php migrate
@@ -95,6 +119,15 @@ jobs:
 
               sleep 2
             done
+
+            echo "Ensuring dev database and user..."
+            dc exec -T mysql sh -lc 'printf "%s\n" \
+              "CREATE DATABASE IF NOT EXISTS app_dev CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" \
+              "CREATE USER IF NOT EXISTS '\''app'\''@'\''%'\'' IDENTIFIED BY '\''app'\'';" \
+              "ALTER USER '\''app'\''@'\''%'\'' IDENTIFIED BY '\''app'\'';" \
+              "GRANT ALL PRIVILEGES ON app_dev.* TO '\''app'\''@'\''%'\'';" \
+              "FLUSH PRIVILEGES;" \
+              | mysql -uroot --password="$MYSQL_ROOT_PASSWORD"'
 
             echo "Assigning permissions inside volumes..."
             dc run --rm --no-deps -u root php sh -lc 'mkdir -p storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing bootstrap/cache && chown -R www-data:www-data storage bootstrap/cache && chmod -R 775 storage bootstrap/cache'
