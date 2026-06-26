@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasColumn('usersschedules', 'localizationsid')) {
+            return;
+        }
+
         Schema::table('usersschedules', function (Blueprint $table) {
             $table->unsignedInteger('localizationsid')->default(0)->after('whoupdated_usersid');
         });
@@ -15,6 +19,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (!Schema::hasColumn('usersschedules', 'localizationsid')) {
+            return;
+        }
+
         Schema::table('usersschedules', function (Blueprint $table) {
             $table->dropColumn('localizationsid');
         });
