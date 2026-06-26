@@ -1,3 +1,8 @@
+# Ignoruj pliki z prawdziwymi hasłami
+.env
 backend/.env.docker
-backend/env.docker.example
+
+# Ignoruj klucze (to masz dobrze)
 backend/storage/firebase/firebase-service-account.json
+
+# (Linijkę backend/env.docker.example po prostu usuń)
