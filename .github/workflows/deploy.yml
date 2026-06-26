@@ -73,11 +73,6 @@ jobs:
               set_env_value .env.docker DB_PASSWORD app
             fi
 
-            # Dynamiczne wczytanie haseł w locie z serwerowego pliku .env (potrzebne tylko po to, by skrypt mógł przetestować bazę)
-            export MYSQL_USER=$(grep -oP '(?<=^MYSQL_USER=).*' .env | tr -d '"' || echo "app")
-            export MYSQL_PASSWORD=$(grep -oP '(?<=^MYSQL_PASSWORD=).*' .env | tr -d '"' || echo "app")
-            export MYSQL_ROOT_PASSWORD=$(grep -oP '(?<=^MYSQL_ROOT_PASSWORD=).*' .env | tr -d '"' || echo "app")
-
             # Remove leftovers from the old broken project name, if present.
             docker compose -p mobile_1_laravel down || true
 
@@ -106,7 +101,7 @@ jobs:
 
             echo "Waiting for database..."
             for i in $(seq 1 60); do
-              if dc exec -T mysql sh -lc "mysqladmin ping -h localhost -u root --password='${MYSQL_ROOT_PASSWORD}' --silent"; then
+              if dc exec -T mysql sh -lc 'mysqladmin ping -h localhost -u root --password="$MYSQL_ROOT_PASSWORD" --silent'; then
                 break
               fi
 
@@ -120,7 +115,7 @@ jobs:
             done
 
             echo "Ensuring dev database and user..."
-            if ! dc exec -T mysql sh -lc "mysql -u'${MYSQL_USER}' --password='${MYSQL_PASSWORD}' '${MYSQL_DATABASE}' -e 'SELECT 1' >/dev/null 2>&1"; then
+            if ! dc exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SELECT 1" >/dev/null 2>&1'; then
               echo "Dev MySQL volume has incompatible app credentials. Recreating DEV database volume only..."
               dc down
               docker volume rm edsdev_mysql_data || true
@@ -128,7 +123,7 @@ jobs:
 
               echo "Waiting for recreated database app user..."
               for i in $(seq 1 60); do
-                if dc exec -T mysql sh -lc "mysql -u'${MYSQL_USER}' --password='${MYSQL_PASSWORD}' '${MYSQL_DATABASE}' -e 'SELECT 1' >/dev/null 2>&1"; then
+                if dc exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SELECT 1" >/dev/null 2>&1'; then
                   break
                 fi
 
