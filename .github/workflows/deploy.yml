@@ -25,18 +25,6 @@ jobs:
 
             cd "${{ secrets.DEPLOY_PATH }}"
 
-            write_compose_env() {
-              cat > .env <<'EOF'
-            COMPOSE_PROJECT_NAME=edsdev
-            APP_HTTP_PORT=8081
-            DB_HOST_PORT=3308
-            MYSQL_DATABASE=app_dev
-            MYSQL_USER=app
-            MYSQL_PASSWORD=app
-            MYSQL_ROOT_PASSWORD=app
-            EOF
-            }
-
             dc() {
               docker compose --env-file .env "$@"
             }
@@ -53,7 +41,26 @@ jobs:
               fi
             }
 
-            configure_laravel_dev_env() {
+            # ==========================================
+            # ETAP 1: Ochrona plików środowiskowych na VPS
+            # ==========================================
+            # Skrypt NIE nadpisuje plików, jeśli już istnieją na serwerze!
+            
+            if [ ! -f .env ]; then
+              echo "Brak pliku .env! Tworzę z domyślnymi wartościami (zmień je potem ręcznie na serwerze)..."
+              cat > .env <<'EOF'
+            COMPOSE_PROJECT_NAME=edsdev
+            APP_HTTP_PORT=8081
+            DB_HOST_PORT=3308
+            MYSQL_DATABASE=app_dev
+            MYSQL_USER=app
+            MYSQL_PASSWORD=app
+            MYSQL_ROOT_PASSWORD=app
+            EOF
+            fi
+
+            if [ ! -f .env.docker ]; then
+              echo "Brak pliku .env.docker! Tworzę z domyślnymi wartościami..."
               touch .env.docker
               set_env_value .env.docker APP_ENV local
               set_env_value .env.docker APP_DEBUG true
@@ -64,10 +71,12 @@ jobs:
               set_env_value .env.docker DB_DATABASE app_dev
               set_env_value .env.docker DB_USERNAME app
               set_env_value .env.docker DB_PASSWORD app
-            }
+            fi
 
-            # .env is only for Docker Compose. Laravel settings stay in .env.docker.
-            write_compose_env
+            # Dynamiczne wczytanie haseł w locie z serwerowego pliku .env (potrzebne tylko po to, by skrypt mógł przetestować bazę)
+            export MYSQL_USER=$(grep -oP '(?<=^MYSQL_USER=).*' .env | tr -d '"' || echo "app")
+            export MYSQL_PASSWORD=$(grep -oP '(?<=^MYSQL_PASSWORD=).*' .env | tr -d '"' || echo "app")
+            export MYSQL_ROOT_PASSWORD=$(grep -oP '(?<=^MYSQL_ROOT_PASSWORD=).*' .env | tr -d '"' || echo "app")
 
             # Remove leftovers from the old broken project name, if present.
             docker compose -p mobile_1_laravel down || true
@@ -86,17 +95,7 @@ jobs:
             git reset --hard origin/dev
 
             echo "Configuring environment files..."
-            write_compose_env
-
-            if [ ! -f .env.docker ]; then
-              if [ -f backend/.env.docker ]; then
-                cp backend/.env.docker .env.docker
-              elif [ -f backend/.env.docker.example ]; then
-                cp backend/.env.docker.example .env.docker
-              fi
-            fi
-
-            configure_laravel_dev_env
+            # Wgrywamy Laravelowi chroniony plik ze środowiska Dockerowego
             cp .env.docker backend/.env
 
             echo "Building application image..."
@@ -107,7 +106,7 @@ jobs:
 
             echo "Waiting for database..."
             for i in $(seq 1 60); do
-              if dc exec -T mysql sh -lc 'mysqladmin ping -h localhost -u root --password="$MYSQL_ROOT_PASSWORD" --silent'; then
+              if dc exec -T mysql sh -lc "mysqladmin ping -h localhost -u root --password='${MYSQL_ROOT_PASSWORD}' --silent"; then
                 break
               fi
 
@@ -121,7 +120,7 @@ jobs:
             done
 
             echo "Ensuring dev database and user..."
-            if ! dc exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SELECT 1" >/dev/null 2>&1'; then
+            if ! dc exec -T mysql sh -lc "mysql -u'${MYSQL_USER}' --password='${MYSQL_PASSWORD}' '${MYSQL_DATABASE}' -e 'SELECT 1' >/dev/null 2>&1"; then
               echo "Dev MySQL volume has incompatible app credentials. Recreating DEV database volume only..."
               dc down
               docker volume rm edsdev_mysql_data || true
@@ -129,7 +128,7 @@ jobs:
 
               echo "Waiting for recreated database app user..."
               for i in $(seq 1 60); do
-                if dc exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SELECT 1" >/dev/null 2>&1'; then
+                if dc exec -T mysql sh -lc "mysql -u'${MYSQL_USER}' --password='${MYSQL_PASSWORD}' '${MYSQL_DATABASE}' -e 'SELECT 1' >/dev/null 2>&1"; then
                   break
                 fi
 
