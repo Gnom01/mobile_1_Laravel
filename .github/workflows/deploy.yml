@@ -25,23 +25,44 @@ jobs:
 
             cd "${{ secrets.DEPLOY_PATH }}"
 
-            # 1) Zatrzymanie kontenerów przed aktualizacją
-            docker compose down || true
+            write_compose_env() {
+              cat > .env <<'EOF'
+            COMPOSE_PROJECT_NAME=edsdev
+            APP_HTTP_PORT=8081
+            DB_HOST_PORT=3308
+            MYSQL_DATABASE=app_dev
+            MYSQL_USER=app
+            MYSQL_PASSWORD=app
+            MYSQL_ROOT_PASSWORD=app
+            EOF
+            }
 
-            # 2) Czyszczenie pozostałości (Kluczowe dla stabilności)
+            dc() {
+              docker compose --env-file .env "$@"
+            }
+
+            # .env is only for Docker Compose. Laravel settings stay in .env.docker.
+            write_compose_env
+
+            # Remove leftovers from the old broken project name, if present.
+            docker compose -p mobile_1_laravel down || true
+
+            # Stop the dev stack before updating. Volumes are kept.
+            dc down || true
+
             echo "Cleaning up leftovers..."
             sudo rm -rf backend/storage/framework/views/* || true
             sudo rm -rf backend/storage/logs/* || true
             sudo rm -rf backend/bootstrap/cache/*.php || true
             sudo chown -R ubuntu:ubuntu backend/storage backend/bootstrap/cache || true
 
-            # 3) Aktualizacja kodu z Git
             echo "Updating code via Git..."
             git fetch origin
             git reset --hard origin/dev
 
-            # 4) Konfiguracja plików .env
             echo "Configuring environment files..."
+            write_compose_env
+
             if [ ! -f .env.docker ]; then
               if [ -f backend/.env.docker ]; then
                 cp backend/.env.docker .env.docker
@@ -50,48 +71,33 @@ jobs:
               fi
             fi
 
-            cp .env.docker .env || true
             if [ ! -f backend/.env ]; then
               cp .env.docker backend/.env || true
             fi
 
-            # 5) Budowanie i start (Obsługa nowych ROZSZERZEŃ PHP)
-            # Flaga --build wymusza sprawdzenie Dockerfile. Jeśli dodałeś tam nowe 
-            # rozszerzenie (np. bcmath, gd), zostanie ono teraz doinstalowane.
-            echo "Building and starting containers (updating extensions if needed)..."
-            docker compose up -d --build
+            echo "Building and starting containers..."
+            dc up -d --build
 
-            # 6) Naprawa uprawnień w wolumenach
             echo "Assigning permissions inside volumes..."
-            docker compose exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
-            docker compose exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+            dc exec -T php mkdir -p storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing bootstrap/cache
+            dc exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+            dc exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-            # 7) Operacje Laravela (MIGRACJE I OPTYMALIZACJA)
             echo "Running Laravel tasks..."
-            
-            # Tworzymy strukturę folderów w wolumenie (zapobiega błędowi View path not found)
-            docker compose exec -T php mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing
-            docker compose exec -T php chown -R www-data:www-data storage
+            dc exec -T php composer install --no-dev --optimize-autoloader
 
-            # Instalacja zależności composer
-            docker compose exec -T php composer install --no-dev --optimize-autoloader
-
-            # --- MIGRACJE BAZY DANYCH ---
             echo "Running database migrations..."
-            docker compose exec -T php php artisan migrate --force
+            dc exec -T php php artisan migrate --force
 
-            # Generowanie klucza (tylko jeśli brak)
-            docker compose exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
+            dc exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
-            # Czyszczenie i budowanie cache
-            docker compose exec -T php php artisan config:cache
-            docker compose exec -T php php artisan route:cache
-            docker compose exec -T php php artisan view:clear || true
-            docker compose exec -T php php artisan view:cache
+            dc exec -T php php artisan optimize:clear
+            dc exec -T php php artisan config:cache
+            dc exec -T php php artisan route:cache
+            dc exec -T php php artisan view:cache
 
-            # 8) Restart workerów
             echo "Restarting queue and scheduler..."
-            docker compose restart queue scheduler
+            dc restart queue scheduler
 
             echo "----------------------------------------"
             echo "DEPLOY SUCCESSFUL!"
