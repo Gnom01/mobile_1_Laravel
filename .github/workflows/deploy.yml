@@ -121,13 +121,49 @@ jobs:
             done
 
             echo "Ensuring dev database and user..."
-            dc exec -T mysql sh -lc 'printf "%s\n" \
-              "CREATE DATABASE IF NOT EXISTS app_dev CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" \
-              "CREATE USER IF NOT EXISTS '\''app'\''@'\''%'\'' IDENTIFIED BY '\''app'\'';" \
-              "ALTER USER '\''app'\''@'\''%'\'' IDENTIFIED BY '\''app'\'';" \
-              "GRANT ALL PRIVILEGES ON app_dev.* TO '\''app'\''@'\''%'\'';" \
-              "FLUSH PRIVILEGES;" \
-              | mysql -uroot --password="$MYSQL_ROOT_PASSWORD"'
+            if dc exec -T mysql sh -lc 'mysql -uroot --password="$MYSQL_ROOT_PASSWORD" -e "SELECT 1" >/dev/null 2>&1'; then
+              dc exec -T mysql sh -lc 'printf "%s\n" \
+                "CREATE DATABASE IF NOT EXISTS app_dev CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" \
+                "CREATE USER IF NOT EXISTS '\''app'\''@'\''%'\'' IDENTIFIED BY '\''app'\'';" \
+                "ALTER USER '\''app'\''@'\''%'\'' IDENTIFIED BY '\''app'\'';" \
+                "GRANT ALL PRIVILEGES ON app_dev.* TO '\''app'\''@'\''%'\'';" \
+                "FLUSH PRIVILEGES;" \
+                | mysql -uroot --password="$MYSQL_ROOT_PASSWORD"'
+            else
+              echo "Root password does not match the existing dev MySQL volume. Checking app user..."
+
+              if dc exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SELECT 1" >/dev/null 2>&1'; then
+                echo "App user can access dev database. Skipping root repair."
+              else
+                echo "Dev MySQL volume has incompatible credentials. Recreating DEV database volume only..."
+                dc down
+                docker volume rm edsdev_mysql_data || true
+                dc up -d mysql
+
+                echo "Waiting for recreated database..."
+                for i in $(seq 1 60); do
+                  if dc exec -T mysql sh -lc 'mysqladmin ping -h localhost -u root --password="$MYSQL_ROOT_PASSWORD" --silent'; then
+                    break
+                  fi
+
+                  if [ "$i" -eq 60 ]; then
+                    echo "Recreated database did not become ready in time"
+                    dc logs mysql
+                    exit 1
+                  fi
+
+                  sleep 2
+                done
+
+                dc exec -T mysql sh -lc 'printf "%s\n" \
+                  "CREATE DATABASE IF NOT EXISTS app_dev CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" \
+                  "CREATE USER IF NOT EXISTS '\''app'\''@'\''%'\'' IDENTIFIED BY '\''app'\'';" \
+                  "ALTER USER '\''app'\''@'\''%'\'' IDENTIFIED BY '\''app'\'';" \
+                  "GRANT ALL PRIVILEGES ON app_dev.* TO '\''app'\''@'\''%'\'';" \
+                  "FLUSH PRIVILEGES;" \
+                  | mysql -uroot --password="$MYSQL_ROOT_PASSWORD"'
+              fi
+            fi
 
             echo "Assigning permissions inside volumes..."
             dc run --rm --no-deps -u root php sh -lc 'mkdir -p storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing bootstrap/cache && chown -R www-data:www-data storage bootstrap/cache && chmod -R 775 storage bootstrap/cache'
