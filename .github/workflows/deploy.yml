@@ -75,26 +75,44 @@ jobs:
               cp .env.docker backend/.env || true
             fi
 
-            echo "Building and starting containers..."
-            dc up -d --build
+            echo "Building application image..."
+            dc build php migrate
+
+            echo "Starting database..."
+            dc up -d mysql
+
+            echo "Waiting for database..."
+            for i in $(seq 1 60); do
+              if dc exec -T mysql sh -lc 'mysqladmin ping -h localhost -u root --password="$MYSQL_ROOT_PASSWORD" --silent'; then
+                break
+              fi
+
+              if [ "$i" -eq 60 ]; then
+                echo "Database did not become ready in time"
+                dc logs mysql
+                exit 1
+              fi
+
+              sleep 2
+            done
 
             echo "Assigning permissions inside volumes..."
-            dc exec -T php mkdir -p storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing bootstrap/cache
-            dc exec -T php chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
-            dc exec -T php chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+            dc run --rm --no-deps -u root php sh -lc 'mkdir -p storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing bootstrap/cache && chown -R www-data:www-data storage bootstrap/cache && chmod -R 775 storage bootstrap/cache'
 
             echo "Running Laravel tasks..."
-            dc exec -T php composer install --no-dev --optimize-autoloader
+            dc run --rm --no-deps php composer install --no-dev --optimize-autoloader
+            dc run --rm --no-deps php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
 
             echo "Running database migrations..."
-            dc exec -T php php artisan migrate --force
+            dc run --rm --no-deps php php artisan migrate --force
 
-            dc exec -T php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
+            dc run --rm --no-deps php php artisan optimize:clear
+            dc run --rm --no-deps php php artisan config:cache
+            dc run --rm --no-deps php php artisan route:cache
+            dc run --rm --no-deps php php artisan view:cache
 
-            dc exec -T php php artisan optimize:clear
-            dc exec -T php php artisan config:cache
-            dc exec -T php php artisan route:cache
-            dc exec -T php php artisan view:cache
+            echo "Starting application services..."
+            dc up -d --no-deps php nginx queue scheduler
 
             echo "Restarting queue and scheduler..."
             dc restart queue scheduler
