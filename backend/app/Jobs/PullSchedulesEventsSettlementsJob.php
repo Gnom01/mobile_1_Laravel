@@ -19,7 +19,7 @@ class PullSchedulesEventsSettlementsJob implements ShouldQueue
             'resource'        => 'scheduleseventssettlements',
             'endpoint'        => '/CrmToMobileSync/getSchedulesEventsSettlementsMobile',
             'model'           => SchedulesEventSettlement::class,
-            'primaryKey'      => 'scheduleseventssettlementsid',
+            'primaryKey'      => 'scheduleseventssettlementsID',
             'pageSize'        => 1000,
             'responseKey'     => 'body',
             'whenUpdatedKey'  => 'whenupdated',

@@ -22,7 +22,7 @@ class PullCoursesJob implements ShouldQueue
             'model'       => Course::class,
             'primaryKey'  => 'coursesHeadingsID',
             'apiPrimaryKey' => 'coursesHeadingsID',
-            'pageSize'    => 500,
+            'pageSize'    => 1000,
             'responseKey' => 'body',
             'extraParams' => [
                 'current_LocalizationsID' => '0',
