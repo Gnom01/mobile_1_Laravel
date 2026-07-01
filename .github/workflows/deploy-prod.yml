@@ -1,0 +1,121 @@
+name: Deploy (prod)
+
+# Automatyczny deploy PRODUKCJI po każdym push na gałąź main.
+# Wzorowany na Deploy (dev), ale:
+#   - własne sekrety PROD_* (inny serwer/ścieżka niż dev),
+#   - git reset --hard origin/main,
+#   - NIE tworzy domyślnych plików .env (prod musi mieć prawdziwą konfigurację),
+#   - NIGDY nie kasuje wolumenu bazy (ochrona danych produkcyjnych).
+on:
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false          # deploya prod nie przerywamy w połowie
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          port: ${{ secrets.PROD_SSH_PORT }}
+          key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          debug: true
+          script: |
+            set -euo pipefail
+
+            cd "${{ secrets.PROD_DEPLOY_PATH }}"
+
+            dc() {
+              docker compose --env-file .env "$@"
+            }
+
+            # ==========================================
+            # PROD: pliki środowiskowe MUSZĄ już istnieć.
+            # Nie tworzymy dev-owych domyślnych na produkcji.
+            # ==========================================
+            if [ ! -f .env ] || [ ! -f .env.docker ]; then
+              echo "BŁĄD: brak .env lub .env.docker na serwerze prod."
+              echo "Skonfiguruj je RĘCZNIE raz (prawdziwe sekrety prod: APP_ENV=production,"
+              echo "APP_DEBUG=false, APP_URL=https://api.egurrola-app.pl, baza, CRM, SMS_APP_HASH itd.),"
+              echo "a potem uruchom deploy ponownie."
+              exit 1
+            fi
+
+            # Zatrzymanie stacka przed aktualizacją (wolumeny zostają).
+            docker compose -p mobile_1_laravel down || true
+            dc down || true
+
+            echo "Cleaning up leftovers..."
+            sudo rm -rf backend/storage/framework/views/* || true
+            sudo rm -rf backend/storage/logs/* || true
+            sudo rm -rf backend/bootstrap/cache/*.php || true
+            sudo chown -R "$(id -un):$(id -gn)" backend/storage backend/bootstrap/cache || true
+
+            echo "Updating code via Git..."
+            git fetch origin
+            git reset --hard origin/main
+
+            echo "Configuring environment files..."
+            # Wgrywamy Laravelowi chroniony plik ze środowiska Dockerowego (prod)
+            cp .env.docker backend/.env
+
+            echo "Building application image..."
+            dc build php migrate
+
+            echo "Starting database..."
+            dc up -d mysql
+
+            echo "Waiting for database..."
+            for i in $(seq 1 60); do
+              if dc exec -T mysql sh -lc 'mysqladmin ping -h localhost -u root --password="$MYSQL_ROOT_PASSWORD" --silent'; then
+                break
+              fi
+
+              if [ "$i" -eq 60 ]; then
+                echo "Database did not become ready in time"
+                dc logs mysql
+                exit 1
+              fi
+
+              sleep 2
+            done
+
+            # PROD: sprawdzamy dostęp usera, ale NIGDY nie kasujemy wolumenu z danymi.
+            echo "Verifying app DB access..."
+            if ! dc exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SELECT 1" >/dev/null 2>&1'; then
+              echo "BŁĄD: użytkownik aplikacji nie ma dostępu do bazy prod."
+              echo "NIE kasuję wolumenu (dane produkcyjne). Napraw poświadczenia ręcznie i uruchom deploy ponownie."
+              exit 1
+            fi
+            echo "App user can access prod database."
+
+            echo "Assigning permissions inside volumes..."
+            dc run --rm --no-deps -u root php sh -lc 'mkdir -p storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing bootstrap/cache && chown -R www-data:www-data storage bootstrap/cache && chmod -R 775 storage bootstrap/cache'
+
+            echo "Running Laravel tasks..."
+            dc run --rm --no-deps php composer install --no-dev --optimize-autoloader
+            dc run --rm --no-deps php sh -lc 'grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force'
+
+            echo "Running database migrations..."
+            dc run --rm --no-deps php php artisan migrate --force
+
+            dc run --rm --no-deps php php artisan optimize:clear
+            dc run --rm --no-deps php php artisan config:cache
+            dc run --rm --no-deps php php artisan route:cache
+            dc run --rm --no-deps php php artisan view:cache
+
+            echo "Starting application services..."
+            dc up -d --no-deps php nginx queue scheduler
+
+            echo "Restarting queue and scheduler..."
+            dc restart queue scheduler
+
+            echo "----------------------------------------"
+            echo "DEPLOY (PROD) SUCCESSFUL!"
+            echo "----------------------------------------"
