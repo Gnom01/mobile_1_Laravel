@@ -32,21 +32,17 @@ jobs:
           script: |
             set -euo pipefail
 
-            # Dopóki ścieżka prod nie jest ustawiona — pomijamy deploy (bez błędu).
-            if [ -z "${{ secrets.DEPLOY_PATH_PROD }}" ]; then
-              echo "DEPLOY_PATH_PROD nie ustawiony — pomijam deploy prod. Skonfiguruj sekret, aby włączyć."
-              exit 0
-            fi
+            # Katalog stacka PROD na serwerze. To zwykła ścieżka (nie sekret),
+            # ustalona diagnostyką: edsprod stoi w /srv/eds-prod.
+            PROD_PATH="/srv/eds-prod"
 
-            # Katalog stacka PROD na serwerze — MUSI być inny niż DEPLOY_PATH (dev),
-            # inaczej deploy prod nadpisałby środowisko dev.
-            if [ "${{ secrets.DEPLOY_PATH_PROD }}" = "${{ secrets.DEPLOY_PATH }}" ]; then
-              echo "BŁĄD: DEPLOY_PATH_PROD jest taki sam jak DEPLOY_PATH (dev)."
-              echo "Ustaw osobny katalog stacka produkcyjnego, żeby nie nadpisać dev."
+            # Zabezpieczenie: prod nie może wskazywać na katalog dev (nadpisałby dev).
+            if [ "$PROD_PATH" = "${{ secrets.DEPLOY_PATH }}" ]; then
+              echo "BŁĄD: ścieżka prod == DEPLOY_PATH (dev). Przerywam, by nie nadpisać dev."
               exit 1
             fi
 
-            cd "${{ secrets.DEPLOY_PATH_PROD }}"
+            cd "$PROD_PATH"
 
             dc() {
               docker compose --env-file .env "$@"
