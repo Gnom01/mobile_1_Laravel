@@ -31,6 +31,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Clients
     Route::get('/clients', [ClientController::class, 'index']);
+    
     Route::put('/clients/{id}', [ClientController::class, 'update']);
 
     // Users
