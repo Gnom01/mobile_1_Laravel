@@ -62,7 +62,7 @@ class OtpController
             'attempts'   => 0,
         ]);
 
-        $appHash = config('services.sms.app_hash', '');
+        $appHash = $this->resolveAppHash($request);
 
         $msg = "<#> Kod logowania1: {$code}. Wazny 5 min.\n{$appHash}";
 
@@ -210,7 +210,7 @@ class OtpController
             'attempts'   => 0,
         ]);
 
-        $appHash = config('services.sms.app_hash', '');
+        $appHash = $this->resolveAppHash($request);
 
         $msg = "<#> Kod rejestracji: {$code}. Wazny 5 min.\n{$appHash}";
 
@@ -517,6 +517,26 @@ class OtpController
     // ─────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────
+
+    /**
+     * Ustala hash SMS Retriever doklejany do treści SMS.
+     *
+     * Priorytet: hash przesłany przez aplikację (pole `appHash`) — dzięki temu
+     * autouzupełnianie działa dla każdego wariantu podpisu (debug/dev/prod/Play),
+     * bo aplikacja zna swój aktualny hash. Fallback: stała z config/.env.
+     * Walidacja formatu (11 znaków, alfabet base64) chroni przed wstrzyknięciem
+     * dowolnej treści do SMS.
+     */
+    private function resolveAppHash(Request $request): string
+    {
+        $provided = trim((string) $request->input('appHash', ''));
+
+        if ($provided !== '' && preg_match('/^[A-Za-z0-9+\/=_-]{11}$/', $provided) === 1) {
+            return $provided;
+        }
+
+        return (string) config('services.sms.app_hash', '');
+    }
 
     /**
      * Normalize phone number to 9-digits format (removes +48).
