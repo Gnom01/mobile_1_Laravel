@@ -1,0 +1,35 @@
+name: Discover server (one-shot)
+
+# Jednorazowa diagnostyka — uruchamiana RĘCZNIE z zakładki Actions.
+# Łączy się tymi samymi sekretami SSH co deploy dev i wypisuje, jakie stacki
+# docker compose stoją na serwerze i gdzie (żeby znaleźć katalog stacka PROD).
+# Nic nie zmienia — tylko czyta.
+on:
+  workflow_dispatch:
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "===== 1. Projekty docker compose (nazwa + plik/katalog) ====="
+            docker compose ls --all || true
+            echo ""
+            echo "===== 2. Kontenery i porty ====="
+            docker ps --format 'table {{.Names}}\t{{.Ports}}\t{{.Status}}' || true
+            echo ""
+            echo "===== 3. Pliki .env wskazujące api.egurrola-app.pl (stack PROD) ====="
+            grep -rls "api.egurrola-app.pl" /home /srv /opt /root 2>/dev/null | head -20 || true
+            echo ""
+            echo "===== 4. Pliki docker-compose na serwerze ====="
+            find /home /srv /opt /root -maxdepth 5 -name "docker-compose*.y*ml" 2>/dev/null | head -20 || true
+            echo ""
+            echo "===== 5. Katalog stacka DEV (dla porównania) ====="
+            echo "DEPLOY_PATH (dev) = ${{ secrets.DEPLOY_PATH }}"
