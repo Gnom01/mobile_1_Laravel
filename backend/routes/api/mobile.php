@@ -51,6 +51,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/users-relations/{parentGuid}', [UsersRelationsController::class, 'getRelatedUsers']);
     Route::post('/users-relations', [UsersRelationsController::class, 'store']);
 
+    // Relations — wyszukanie i powiązanie ISTNIEJĄCEJ osoby (weryfikacja SMS).
+    // Throttle per użytkownik uzupełnia wewnętrzny rate limit per numer telefonu.
+    Route::post('/users-relations/search', [UsersRelationsController::class, 'search'])
+        ->middleware('throttle:30,15');
+    Route::post('/users-relations/link/send-otp', [UsersRelationsController::class, 'sendLinkOtp'])
+        ->middleware('throttle:6,15');
+    Route::post('/users-relations/link/verify', [UsersRelationsController::class, 'verifyLink'])
+        ->middleware('throttle:15,15');
+
     // Calendar
     Route::get('/calendar/people/{parentGuid}', [CalendarController::class, 'getPeople']);
     Route::get('/calendar/month/{parentGuid}', [CalendarController::class, 'getMonthSummary']);
