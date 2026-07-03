@@ -46,3 +46,10 @@ Schedule::call(function () {
         ->pluck('id')
         ->each(fn ($id) => SendPushNotificationJob::dispatch((int) $id));
 })->everyMinute()->name('push-notifications-dispatch')->withoutOverlapping();
+
+// Program wsparcia — naliczanie miesięcznych odnowień (wpłaty pending +
+// zdarzenia billing_due dla przyszłej integracji operatora płatności).
+Schedule::command('support:process-renewals')
+    ->dailyAt('06:00')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/support-renewals.log'));

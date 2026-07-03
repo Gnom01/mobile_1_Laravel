@@ -349,6 +349,212 @@ class CalendarController extends Controller
         ]);
     }
 
+    /**
+     * Nadchodzące zajęcia w zakresie [dziś, dziś + days] — zasila sekcję
+     * „Najbliższe zajęcia" na pulpicie oraz listę DZIŚ/JUTRO/NAJBLIŻSZE DNI
+     * w module Zajęcia. Zajęcia z dzisiaj, które już się skończyły, są pomijane.
+     */
+    public function getUpcomingEvents(Request $request, string $parentGuid): JsonResponse
+    {
+        [$authUser, $parentUser, $relatedUsers] = $this->resolveParentContext($request, $parentGuid);
+
+        if (!$authUser || !$parentUser) {
+            return response()->json(['success' => false, 'error' => 'FORBIDDEN'], 403);
+        }
+
+        $validated = $request->validate([
+            'days' => ['nullable', 'integer', 'min:1', 'max:60'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'personGuid' => ['nullable', 'string'],
+        ]);
+
+        $scopeUserIds = $this->resolveScopeUserIds(
+            $authUser,
+            $parentUser,
+            $relatedUsers,
+            $validated['personGuid'] ?? null
+        );
+
+        if ($scopeUserIds === null) {
+            return response()->json(['success' => false, 'error' => 'FORBIDDEN'], 403);
+        }
+
+        if (empty($scopeUserIds)) {
+            return response()->json(['success' => true, 'body' => []]);
+        }
+
+        $days = (int) ($validated['days'] ?? 14);
+        $limit = (int) ($validated['limit'] ?? 50);
+
+        $now = Carbon::now();
+        $fromDate = $now->toDateString();
+        $toDate = $now->copy()->addDays($days)->toDateString();
+        $nowTime = $now->format('H:i:s');
+
+        $placeholders = implode(',', array_fill(0, count($scopeUserIds), '?'));
+
+        $rows = DB::select(
+            "
+            SELECT DISTINCT
+                ses.schedulesEventsSettlementsID,
+                ses.schedulesID,
+                ses.eventDate,
+                ses.timeFrom,
+                ses.timeTo,
+                ses.coursesHeadingsID,
+                c.usersID AS participantUsersID,
+                c.userFirstName AS participantFirstName,
+                c.userLastName AS participantLastName,
+                COALESCE(course.courseHeadingName, ch.CourseHeadingName, c.courseHeadingName, '') AS title,
+                COALESCE(xs.groupname, c.courseHeadingName, course.courseHeadingName, ch.CourseHeadingName, '') AS groupName,
+                COALESCE(l.LocalizationName, course.localizationName, xs.location, '') AS locationName,
+                COALESCE(xs.instructors, course.instructorsList, '') AS instructors,
+                COALESCE(xs.description, '') AS description,
+                0 AS isInstructorEvent
+            FROM contracts c
+            INNER JOIN scheduleseventssettlements ses
+                ON ses.coursesHeadingsID = c.coursesHeadingsID
+                AND ses.cancelled = 0
+            LEFT JOIN xschedules xs
+                ON xs.id = ses.schedulesID
+            LEFT JOIN courses course
+                ON course.coursesHeadingsID = ses.coursesHeadingsID
+            LEFT JOIN coursesheadings ch
+                ON ch.CoursesHeadingsID = ses.coursesHeadingsID
+                AND ch.Cancelled = 0
+            LEFT JOIN localizations l
+                ON l.LocalizationsID = ses.localizationsID
+                AND l.Cancelled = 0
+            WHERE c.cancelled = 0
+                AND c.usersID IN ($placeholders)
+                AND ses.eventDate BETWEEN ? AND ?
+                AND (ses.eventDate > ? OR ses.timeTo >= ?)
+                AND (c.contractPeriodFrom IS NULL OR c.contractPeriodFrom <= ses.eventDate)
+                AND (c.contractPeriodTo IS NULL OR c.contractPeriodTo >= ses.eventDate)
+            ",
+            array_merge($scopeUserIds, [$fromDate, $toDate, $fromDate, $nowTime])
+        );
+
+        if (in_array((int) $authUser->UsersID, $scopeUserIds, true)) {
+            $employeeIds = \App\Models\Employee::where('UsersID', $authUser->UsersID)
+                ->where(function ($q) {
+                    $q->whereNull('Cancelled')->orWhere('Cancelled', 0);
+                })
+                ->pluck('EmployeesID')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            if (!empty($employeeIds)) {
+                $employeeOrWhere = [];
+                $employeeBindings = [];
+                foreach ($employeeIds as $eid) {
+                    $employeeOrWhere[] = "FIND_IN_SET(?, ses.instructorsIDList)";
+                    $employeeBindings[] = $eid;
+                }
+                $orWhereSql = implode(' OR ', $employeeOrWhere);
+
+                $instructorRows = DB::select(
+                    "
+                    SELECT DISTINCT
+                        ses.schedulesEventsSettlementsID,
+                        ses.schedulesID,
+                        ses.eventDate,
+                        ses.timeFrom,
+                        ses.timeTo,
+                        ses.coursesHeadingsID,
+                        ? AS participantUsersID,
+                        ? AS participantFirstName,
+                        ? AS participantLastName,
+                        COALESCE(course.courseHeadingName, ch.CourseHeadingName, '') AS title,
+                        COALESCE(xs.groupname, course.courseHeadingName, ch.CourseHeadingName, '') AS groupName,
+                        COALESCE(l.LocalizationName, course.localizationName, xs.location, '') AS locationName,
+                        COALESCE(xs.instructors, course.instructorsList, '') AS instructors,
+                        COALESCE(xs.description, '') AS description,
+                        1 AS isInstructorEvent
+                    FROM scheduleseventssettlements ses
+                    LEFT JOIN xschedules xs
+                        ON xs.id = ses.schedulesID
+                    LEFT JOIN courses course
+                        ON course.coursesHeadingsID = ses.coursesHeadingsID
+                    LEFT JOIN coursesheadings ch
+                        ON ch.CoursesHeadingsID = ses.coursesHeadingsID
+                        AND ch.Cancelled = 0
+                    LEFT JOIN localizations l
+                        ON l.LocalizationsID = ses.localizationsID
+                        AND l.Cancelled = 0
+                    WHERE ses.cancelled = 0
+                        AND ses.eventDate BETWEEN ? AND ?
+                        AND (ses.eventDate > ? OR ses.timeTo >= ?)
+                        AND ($orWhereSql)
+                    ",
+                    array_merge([
+                        $authUser->UsersID,
+                        $authUser->FirstName ?? '',
+                        $authUser->LastName ?? '',
+                        $fromDate,
+                        $toDate,
+                        $fromDate,
+                        $nowTime,
+                    ], $employeeBindings)
+                );
+
+                $rows = array_merge($rows, $instructorRows);
+            }
+        }
+
+        $body = array_map(static function ($row) {
+            return [
+                'id' => (int) $row->schedulesEventsSettlementsID,
+                'scheduleId' => (int) $row->schedulesID,
+                'date' => $row->eventDate,
+                'timeFrom' => substr((string) $row->timeFrom, 0, 5),
+                'timeTo' => substr((string) $row->timeTo, 0, 5),
+                'coursesHeadingsID' => (int) $row->coursesHeadingsID,
+                'participantUsersID' => (int) $row->participantUsersID,
+                'participantFirstName' => (string) $row->participantFirstName,
+                'participantLastName' => (string) $row->participantLastName,
+                'participantFullName' => trim(
+                    sprintf(
+                        '%s %s',
+                        (string) $row->participantFirstName,
+                        (string) $row->participantLastName
+                    )
+                ),
+                'title' => (string) $row->title,
+                'groupName' => (string) $row->groupName,
+                'locationName' => (string) $row->locationName,
+                'instructors' => (string) $row->instructors,
+                'description' => (string) $row->description,
+                'isInstructorEvent' => (bool) ($row->isInstructorEvent ?? false),
+            ];
+        }, $rows);
+
+        usort($body, static function ($a, $b) {
+            if ($a['date'] !== $b['date']) {
+                return strcmp($a['date'], $b['date']);
+            }
+            if ($a['timeFrom'] !== $b['timeFrom']) {
+                return strcmp($a['timeFrom'], $b['timeFrom']);
+            }
+            return strcmp($a['participantLastName'], $b['participantLastName']);
+        });
+
+        $uniqueBody = [];
+        $seen = [];
+        foreach ($body as $item) {
+            $key = $item['id'] . '-' . $item['participantUsersID'];
+            if (!isset($seen[$key])) {
+                $seen[$key] = true;
+                $uniqueBody[] = $item;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'body' => array_slice($uniqueBody, 0, $limit),
+        ]);
+    }
+
     private function resolveParentContext(Request $request, string $parentGuid): array
     {
         $authUser = $request->user();

@@ -64,10 +64,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/calendar/people/{parentGuid}', [CalendarController::class, 'getPeople']);
     Route::get('/calendar/month/{parentGuid}', [CalendarController::class, 'getMonthSummary']);
     Route::get('/calendar/day/{parentGuid}', [CalendarController::class, 'getDayEvents']);
+    Route::get('/calendar/upcoming/{parentGuid}', [CalendarController::class, 'getUpcomingEvents']);
 
     // Schedule changes
     Route::get('/schedule-changes/missed/{parentGuid}', [ScheduleChangesController::class, 'getMissedLessons']);
     Route::get('/schedule-changes/workoffs/{parentGuid}', [ScheduleChangesController::class, 'getWorkoffLessons']);
+
+    // Absences — zgłoszenie nieobecności przez rodzica/uczestnika (CLS_04)
+    Route::post('/absences', [\App\Http\Controllers\Api\AbsenceController::class, 'store']);
+    Route::get('/absences/{parentGuid}', [\App\Http\Controllers\Api\AbsenceController::class, 'index']);
+
+    // Program wsparcia Fundacji Świat Tańca (SUP_01–SUP_03)
+    Route::get('/support/status', [\App\Http\Controllers\Api\SupportProgramController::class, 'status']);
+    Route::post('/support/join', [\App\Http\Controllers\Api\SupportProgramController::class, 'join']);
+    Route::post('/support/pause', [\App\Http\Controllers\Api\SupportProgramController::class, 'pause']);
+    Route::post('/support/resume', [\App\Http\Controllers\Api\SupportProgramController::class, 'resume']);
+    Route::post('/support/cancel', [\App\Http\Controllers\Api\SupportProgramController::class, 'cancel']);
+    Route::get('/support/history', [\App\Http\Controllers\Api\SupportProgramController::class, 'history']);
 
     // Dictionaries & courses
     Route::get('/dictionaries', [DictionaryController::class, 'index']);
