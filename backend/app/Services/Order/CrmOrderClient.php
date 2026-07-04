@@ -220,13 +220,20 @@ class CrmOrderClient
 
     /**
      * Calculate or set workshop pricing/selection in CRM via CalculateProductForUser.
+     *
+     * CRM zwraca błędy biznesowe (409 rozjazd cen, 400 brak cennika) jako
+     * HTTP 200 ze `status` w kopercie JSON — wcześniej były połykane i flow
+     * szedł do płatności bez koszyka w CRM.
+     *
+     * @throws CrmOrderException       błąd biznesowy CRM (status 4xx w kopercie)
+     * @throws \Exception              błąd połączenia / HTTP
      */
     public function calculateWorkshopPricing(array $payload, string $guid = ''): array
     {
         $endpoint = '/Orders/CalculateProductForUser';
         [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, true);
-        $body = $this->parseCrmBodyResponse($rawBody['__raw'] ?? '');
-        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($body), $httpStatus, $durationMs, $error);
+        $envelope = $this->extractCrmJson($rawBody);
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($envelope), $httpStatus, $durationMs, $error);
 
         if ($error !== null || $httpStatus >= 400) {
             Log::warning('CRM calculateWorkshopPricing failed', [
@@ -237,7 +244,60 @@ class CrmOrderClient
             throw new \Exception("Błąd połączenia z CRM przy kalkulacji ceny: {$error}");
         }
 
-        return $body;
+        $crmStatus = (int) ($envelope['status'] ?? ($httpStatus ?: 200));
+        if ($crmStatus >= 400) {
+            throw new CrmOrderException(
+                $this->extractErrorMessage($envelope, $crmStatus),
+                $crmStatus,
+                $envelope
+            );
+        }
+
+        return is_array($envelope['body'] ?? null) ? $envelope['body'] : $envelope;
+    }
+
+    /**
+     * Krok płatności warsztatów — portal wysyła OrderPayment przez
+     * POST /OrdersPay/payPortal z płaskim body. Wcześniej mobile wysyłał
+     * kopertę {type:'OrderPayment'} na /Orders/createOrder, którego CRM
+     * dla tej koperty nie obsługuje.
+     *
+     * @return array pełna koperta CRM (status, message, token/html/…)
+     * @throws CrmOrderException|CrmIntegrationException
+     */
+    public function payPortal(string $guid, string $returnUrl, string $paymentMethodsP24 = '5'): array
+    {
+        $endpoint = '/OrdersPay/payPortal';
+        $payload  = [
+            'guid'                    => $guid,
+            'paymentMethodsP24'       => $paymentMethodsP24,
+            'returnUrl'               => $returnUrl,
+            'current_LocalizationsID' => -1,
+        ];
+
+        // allowRetry=false: inicjacja płatności nie jest idempotentna.
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, false);
+        $envelope = $this->extractCrmJson($rawBody);
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($envelope), $httpStatus, $durationMs, $error);
+
+        if ($error !== null) {
+            throw new CrmIntegrationException("CRM connection error: {$error}", 0);
+        }
+
+        if ($httpStatus >= 500) {
+            throw new CrmIntegrationException("CRM server error {$httpStatus}", $httpStatus);
+        }
+
+        $crmStatus = (int) ($envelope['status'] ?? ($httpStatus ?: 200));
+        if ($crmStatus >= 400) {
+            throw new CrmOrderException(
+                $this->extractErrorMessage($envelope, $crmStatus),
+                $crmStatus,
+                $envelope
+            );
+        }
+
+        return $envelope;
     }
 
     // ─── Internal ──────────────────────────────────────────────────────────────

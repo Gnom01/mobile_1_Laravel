@@ -22,8 +22,11 @@ class CourseController extends Controller
      */
     public function search(Request $request)
     {
+        // Ta sama brama dostępności co portal: sprzedawalne są wyłącznie
+        // statusy WWW 2 i 3 (portal sprawdza to w 7 miejscach przy każdym
+        // wejściu; '!=0' przepuszczał kursy niedostępne do sprzedaży).
         $query = Course::query()
-            ->where('websiteStatusesDVID', '!=', 0)
+            ->whereIn('websiteStatusesDVID', [2, 3])
             ->where('cancelled', 0)
             ->with('prices');
 
@@ -45,6 +48,16 @@ class CourseController extends Controller
 
         if ($request->filled('weekDayID')) {
             $query->where('startWeekDaysDVID', (int) $request->input('weekDayID'));
+        }
+
+        // Filtr instruktora — portal zawęża po instructorEmployeesIDList;
+        // wcześniej Flutter wysyłał employeeID, a backend go po cichu ignorował.
+        if ($request->filled('employeeID')) {
+            $employeeId = (int) $request->input('employeeID');
+            $query->whereRaw(
+                'FIND_IN_SET(?, REPLACE(instructorEmployeesIDList, " ", ""))',
+                [$employeeId]
+            );
         }
 
         $courses = $query->orderBy('courseHeadingName')->get();

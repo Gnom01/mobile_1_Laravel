@@ -31,12 +31,40 @@ final class CrmOrderPayloadBuilder
         $usersID      = $participantUsersId ?? $authCrmUserId;
         $payerUsersID = (int) ($payload['payer_UsersID'] ?? $payload['payerUserId'] ?? $authCrmUserId);
 
-        $productsID      = (int) ($payload['productsID']      ?? $payload['rawSelectedPricing']['productsID']      ?? 0);
-        $coursesHeadingsID = (int) ($payload['coursesHeadingsID'] ?? $payload['rawCourseData']['coursesHeadingsID'] ?? 0);
+        // Kontrolery mobilne mapują część kluczy z małą literą na końcu
+        // ('coursesHeadingsId', 'productsId' — np. TicketController::mapTicket),
+        // dlatego czytamy oba warianty casingu. Bez tego bilety szły z 0
+        // i zero-trust odrzucał zamówienie.
+        $productsID = (int) (
+            $payload['productsID']
+            ?? $payload['rawSelectedPricing']['productsID']
+            ?? $payload['rawSelectedPricing']['productsId']
+            ?? $payload['rawCourseData']['productsID']
+            ?? $payload['rawCourseData']['productsId']
+            ?? 0
+        );
+        $coursesHeadingsID = (int) (
+            $payload['coursesHeadingsID']
+            ?? $payload['rawCourseData']['coursesHeadingsID']
+            ?? $payload['rawCourseData']['coursesHeadingsId']
+            ?? 0
+        );
 
         $contractAmount    = (float) ($payload['contractAmount']   ?? $payload['allInstallmentsPrice'] ?? 0);
         $contractPeriodFrom = (string) ($payload['contractPeriodFrom'] ?? $payload['contractStartDate'] ?? '');
         $dataTo            = (string) ($payload['dataTo']            ?? $payload['contractEndDate']    ?? '');
+
+        // Portal zawsze wysyła purchaseKey (klucz oferty) — CRM używa go m.in.
+        // do wykrywania duplikatów zakupu (CheckUserForPurchaseKey).
+        $purchaseKey = (string) ($payload['purchaseKey'] ?? '');
+        if ($purchaseKey === '') {
+            $purchaseKey = (string) (
+                $payload['rawCourseData']['courseHeadingName']
+                ?? $payload['rawCourseData']['name']
+                ?? $payload['rawCourseData']['title']
+                ?? ''
+            );
+        }
 
         $arrayOfSelected = self::resolveArrayOfSelectedInstallments($payload, $allInstallments);
 
@@ -47,7 +75,7 @@ final class CrmOrderPayloadBuilder
             'paymentMethodsP24'           => (string) ($payload['paymentMethodsP24']    ?? 'p24'),
             'paymentCardID'               => (string) ($payload['paymentCardID']         ?? ''),
             'buyerNIP'                    => $payload['buyerNIP'] ?? null,
-            'purchaseKey'                 => (string) ($payload['purchaseKey']           ?? ''),
+            'purchaseKey'                 => $purchaseKey,
             'returnUrl'                   => (string) ($payload['returnUrl']             ?? ''),
             'current_LocalizationsID'     => (int) ($payload['current_LocalizationsID'] ?? $defaultLocalizationsId),
             'contractPeriodFrom'          => $contractPeriodFrom,

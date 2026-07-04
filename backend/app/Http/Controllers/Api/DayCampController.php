@@ -13,7 +13,20 @@ class DayCampController extends Controller
      */
     public function index(Request $request)
     {
-        $query = DayCamp::query()->where('website_status_id', '!=', 0)->where('cancelled', 0);
+        // Jak w obozach: minione turnusy poza listą, domyślnie tylko oferty
+        // z wolnymi miejscami (portal filtruje dostępność na żywo).
+        $query = DayCamp::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
+            ->where(function ($q) {
+                $q->whereNull('ends_at')
+                    ->orWhereDate('ends_at', '>=', now()->toDateString());
+            });
+
+        if (!$request->has('availableOnly') || $request->boolean('availableOnly')) {
+            $query->where('is_closed', 0)->where('available_places', '>', 0);
+        }
+
         $this->applyFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();
@@ -30,8 +43,14 @@ class DayCampController extends Controller
      */
     public function show(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
-        $dayCamp = DayCamp::where('crm_id', $id)
-            ->orWhere('id', $id)
+        // Te same warunki co index() — anulowana/ukryta półkolonia nie może
+        // być otwierana ani zamawiana po ID.
+        $dayCamp = DayCamp::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
+            ->where(function ($q) use ($id) {
+                $q->where('crm_id', $id)->orWhere('id', $id);
+            })
             ->firstOrFail();
 
         $mapped = $this->mapDayCamp($dayCamp);
@@ -88,9 +107,7 @@ class DayCampController extends Controller
         if ($request->filled('offerType')) {
             $query->where('offer_type', $request->input('offerType'));
         }
-        if ($request->boolean('availableOnly')) {
-            $query->where('is_closed', 0)->where('available_places', '>', 0);
-        }
+        // availableOnly obsługiwane w index() (domyślnie włączone).
     }
 
     private function mapDayCamp(DayCamp $dayCamp): array

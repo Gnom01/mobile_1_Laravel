@@ -14,6 +14,7 @@ class TicketController extends Controller
     public function index(Request $request)
     {
         $query = Ticket::query()->where('website_status_id', '!=', 0)->where('cancelled', 0);
+        $this->applySaleWindow($query);
         $this->applyFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();
@@ -30,9 +31,15 @@ class TicketController extends Controller
      */
     public function show(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
-        $ticket = Ticket::where('crm_id', $id)
-             ->orWhere('id', $id)
-             ->firstOrFail();
+        // Te same warunki co index() — wcześniej anulowany/ukryty bilet
+        // dało się otworzyć i zamówić po ID.
+        $ticket = Ticket::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
+            ->where(function ($q) use ($id) {
+                $q->where('crm_id', $id)->orWhere('id', $id);
+            })
+            ->firstOrFail();
 
         $mapped = $this->mapTicket($ticket);
 
@@ -60,6 +67,29 @@ class TicketController extends Controller
             'status' => '200',
             'body'   => $mapped,
         ]);
+    }
+
+    /**
+     * Okno sprzedaży + data wydarzenia — portal dostaje z CRM (getPriceTickets)
+     * wyłącznie bilety aktualnie w sprzedaży i filtruje minione wydarzenia.
+     */
+    private function applySaleWindow($query): void
+    {
+        $now = now();
+        $today = $now->toDateString();
+
+        $query
+            ->where(function ($q) use ($now) {
+                $q->whereNull('sale_starts_at')->orWhere('sale_starts_at', '<=', $now);
+            })
+            ->where(function ($q) use ($now) {
+                $q->whereNull('sale_ends_at')->orWhere('sale_ends_at', '>=', $now);
+            })
+            // Wydarzenie nie może być w całości w przeszłości.
+            ->where(function ($q) use ($today) {
+                $q->whereNull('ends_at')
+                    ->orWhereDate('ends_at', '>=', $today);
+            });
     }
 
     private function applyFilters($query, Request $request): void

@@ -24,8 +24,18 @@ final class CrmTicketOrderPayloadBuilder
             $participantUsersId
         );
 
+        // Fallback na dane oferty: API zwraca klucz 'eventId' (małe d),
+        // starsze wersje apki wysyłały eventID=0.
+        $eventId = (int) ($payload['eventID'] ?? $payload['eventId'] ?? 0);
+        if ($eventId === 0) {
+            $raw = (array) ($payload['rawCourseData'] ?? []);
+            $eventId = (int) (
+                $raw['eventID'] ?? $raw['eventId'] ?? $raw['eventsTicketsID'] ?? $raw['id'] ?? 0
+            );
+        }
+
         return array_merge($base, [
-            'eventID'    => (int)    ($payload['eventID']    ?? $payload['eventId']    ?? 0),
+            'eventID'    => $eventId,
             'ticketType' => (string) ($payload['ticketType'] ?? ''),
         ]);
     }

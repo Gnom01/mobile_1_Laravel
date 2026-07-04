@@ -120,6 +120,11 @@ FILESYSTEM_DISK=local
 BROADCAST_CONNECTION=log
 MAIL_MAILER=log
 
+# Firebase Cloud Messaging (ten sam projekt co aplikacje Android/iOS)
+FIREBASE_PROJECT_ID=egurrola-5b892
+FIREBASE_CREDENTIALS=storage/firebase/firebase-service-account.json
+FIREBASE_ALLOW_SIMULATED_PUSH=false
+
 # CRM — PRODUKCYJNY (uzupełnij prawdziwy URL!)
 CRM_BASE_URL=https://UZUPELNIJ-PROD-CRM/API
 CRM_LOGIN_ENDPOINT=/Users/login
@@ -139,6 +144,21 @@ SMS_APP_HASH=ZMIEN
 SMS_TEST_MODE=false
 EOF
 ```
+
+### 2.2.1 PROD — konto serwisowe Firebase (raz)
+
+Pobierz z Firebase Console konto serwisowe projektu `egurrola-5b892`, a następnie
+umieść plik poza repozytorium:
+
+```bash
+mkdir -p /srv/eds-prod/secrets
+chmod 700 /srv/eds-prod/secrets
+cp firebase-service-account.json /srv/eds-prod/secrets/firebase-service-account.json
+chmod 600 /srv/eds-prod/secrets/firebase-service-account.json
+```
+
+Deploy kopiuje ten plik do chronionego wolumenu `storage`, sprawdza poprawność JSON
+i przerywa przed zatrzymaniem aplikacji, jeśli konfiguracji brakuje.
 
 ### 2.3 DEV — analogicznie w `/srv/eds-dev/.env` i `/srv/eds-dev/.env.docker`
 
@@ -321,6 +341,41 @@ docker compose exec mysql mysql -u app -p app          # konsola DB prod (app)
 docker compose down               # stop środowiska (wolumeny zostają)
 docker ps                         # podgląd: edsprod-* i edsdev-* obok siebie
 ```
+
+## Diagnostyka push na PROD
+
+```bash
+cd /srv/eds-prod
+dc() { docker compose --env-file .env "$@"; }
+
+# Worker musi być uruchomiony.
+dc ps queue
+
+# Laravel musi widzieć projekt, plik konta serwisowego i wyłączoną symulację.
+dc exec -T php php artisan tinker --execute='dump([
+  "project_id" => config("services.firebase.project_id"),
+  "credentials" => config("services.firebase.credentials"),
+  "credentials_exists" => is_file(config("services.firebase.credentials")),
+  "allow_simulated" => config("services.firebase.allow_simulated"),
+]);'
+
+# Ostatnie błędy FCM i workera.
+dc logs --tail=300 queue | grep -Ei 'firebase|fcm|push|failed|error'
+
+# Status ostatnich odbiorców; error_message pokaże m.in. brak tokenu lub błąd FCM.
+dc exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "
+SELECT id,push_notification_id,user_id,status,error_message,sent_at,created_at
+FROM push_notification_recipients
+ORDER BY id DESC LIMIT 20;"'
+
+# Czy produkcyjna aplikacja faktycznie zarejestrowała tokeny.
+dc exec -T mysql sh -lc 'mysql -u"$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "
+SELECT platform,is_active,COUNT(*) AS tokens,MAX(last_seen_at) AS last_seen
+FROM device_tokens GROUP BY platform,is_active;"'
+```
+
+Prawidłowy wynik to: `project_id=egurrola-5b892`, `credentials_exists=true`,
+`allow_simulated=false`, działający kontener `queue` oraz świeże aktywne tokeny.
 
 ## Dlaczego to się nie zderza (izolacja)
 

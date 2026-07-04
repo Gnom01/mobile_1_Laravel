@@ -4,5 +4,6 @@ backend/.env.docker
 
 # Ignoruj klucze (to masz dobrze)
 backend/storage/firebase/firebase-service-account.json
+/secrets/
 
 # (Linijkę backend/env.docker.example po prostu usuń)

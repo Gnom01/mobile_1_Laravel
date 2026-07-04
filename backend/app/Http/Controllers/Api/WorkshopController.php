@@ -3,12 +3,18 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Exceptions\Order\CrmOrderException;
+use App\Jobs\PullPaymentsJob;
+use App\Jobs\PullUserWorkshopsGroupsJob;
+use App\Models\OrderRequest;
+use App\Models\Product;
 use App\Models\WorkshopYgm;
 use App\Models\WorkshopEuropean;
 use Illuminate\Http\Request;
 use App\Services\CourseHeadingPricingService;
 use App\Services\Order\CrmOrderClient;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -255,6 +261,7 @@ class WorkshopController extends Controller
                 return response()->json(['success' => false, 'message' => 'Nieprawidłowa kategoria dla YGM'], 400);
             }
             $workshops = WorkshopYgm::where('website_status_id', '!=', 0)
+                ->where('cancelled', 0)
                 ->whereDate('ends_at', '>=', now()->toDateString());
             $this->withProductsLevel3Category($workshops);
             $this->whereProductsLevel3Category($workshops, (int) $categoryID);
@@ -264,6 +271,7 @@ class WorkshopController extends Controller
                 return response()->json(['success' => false, 'message' => 'Nieprawidłowa kategoria dla Euro'], 400);
             }
             $workshops = WorkshopEuropean::where('website_status_id', '!=', 0)
+                ->where('cancelled', 0)
                 ->whereDate('ends_at', '>=', now()->toDateString());
             $this->withProductsLevel3Category($workshops);
             $this->whereProductsLevel3Category($workshops, (int) $categoryID);
@@ -280,18 +288,16 @@ class WorkshopController extends Controller
 
             $priceInfo = count($prices) > 0 ? $prices[0] : null;
 
-            $priceVal = $priceInfo ? (float) ($priceInfo['amount'] ?? 0) : 0.0;
-            $fullPriceVal = $priceInfo ? (float) ($priceInfo['amount'] ?? 0) : 0.0;
+            // Cena z products.Price — CRM waliduje kwoty właśnie przeciwko tej
+            // kolumnie (tolerancja 0.01); pltp.amount bywa rozjechane.
+            $priceVal = $this->resolveWorkshopPrice((int) $w->products_id, $priceInfo);
+            $fullPriceVal = $priceVal;
             $priceListPositionName = $priceInfo ? ($priceInfo['priceListPositionName'] ?? '') : '';
             $priceListTemplateName = $priceInfo ? ($priceInfo['priceListTemplateName'] ?? '') : '';
             $pricelistPositionsTypesDVID = $priceInfo ? (int) ($priceInfo['pricelistPositionsTypesDVID'] ?? 6) : 6;
-            
-            // Get price list type
-            $value = strtoupper($priceListPositionName . ' ' . $priceListTemplateName);
-            $priceListType = 'PL';
-            if (str_contains($value, 'EU') || str_contains($value, 'INT')) {
-                $priceListType = 'EU';
-            }
+
+            // Klasyfikacja PL/EU dokładnie jak walidator CRM (null = nieliczony).
+            $priceListType = $this->classifyPriceListType($priceListPositionName, $priceListTemplateName) ?? 'PL';
 
             // Duration
             $durationInMinutes = $priceInfo ? (int) ($priceInfo['durationInMinutes'] ?? 0) : 0;
@@ -367,11 +373,17 @@ class WorkshopController extends Controller
         $categoryID = (int) $request->input('categoryID');
         $selectedIDs = $request->input('selectedProductsIDs');
 
+        // Te same warunki aktywności co przy listowaniu — wcześniej anulowany,
+        // ukryty albo zakończony warsztat z poprawnym products_id dało się opłacić.
         if ($type === 'ygm') {
             $workshops = WorkshopYgm::whereIn('products_id', $selectedIDs);
         } else {
             $workshops = WorkshopEuropean::whereIn('products_id', $selectedIDs);
         }
+        $workshops
+            ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
+            ->whereDate('ends_at', '>=', now()->toDateString());
         $this->withProductsLevel3Category($workshops);
         $this->whereProductsLevel3Category($workshops, $categoryID);
         $workshops = $workshops->get();
@@ -394,6 +406,9 @@ class WorkshopController extends Controller
         $selectedHours = [];
         $rawTotal = 0.0;
         $seenPasses = [];
+        // Liczniki progów rabatowych YGM wg klasyfikacji CRM (null nieliczony).
+        $plCount = 0;
+        $euCount = 0;
 
         foreach ($workshops as $w) {
             $prices = $pricingService->getPriceByCourseHeadingsID(
@@ -407,16 +422,14 @@ class WorkshopController extends Controller
             }
 
             $priceInfo = $prices[0];
-            $priceVal = (float) ($priceInfo['amount'] ?? 0);
+            $priceVal = $this->resolveWorkshopPrice((int) $w->products_id, $priceInfo);
             $pricelistPositionsTypesDVID = (int) ($priceInfo['pricelistPositionsTypesDVID'] ?? 6);
             $priceListPositionName = $priceInfo['priceListPositionName'] ?? '';
             $priceListTemplateName = $priceInfo['priceListTemplateName'] ?? '';
 
-            $value = strtoupper($priceListPositionName . ' ' . $priceListTemplateName);
-            $priceListType = 'PL';
-            if (str_contains($value, 'EU') || str_contains($value, 'INT')) {
-                $priceListType = 'EU';
-            }
+            // Klasyfikacja jak walidator CRM; null (brak markera) = nieliczony
+            // do progów rabatowych.
+            $priceListType = $this->classifyPriceListType($priceListPositionName, $priceListTemplateName);
 
             // Duration
             $durationInMinutes = (int) ($priceInfo['durationInMinutes'] ?? 0);
@@ -437,13 +450,16 @@ class WorkshopController extends Controller
             $dateFromStr = $w->starts_at ? $w->starts_at->toDateString() . ' ' . $startTimeStr . ':00' : null;
             $dateToStr = $w->ends_at ? $w->ends_at->toDateString() . ' ' . $endTimeStr . ':00' : null;
 
+            if ($priceListType === 'PL') $plCount++;
+            if ($priceListType === 'EU') $euCount++;
+
             $hourItem = [
                 'productsID' => (int) $w->products_id,
                 'coursesHeadingsID' => (int) $w->courses_headings_id,
                 'parentCoursesHeadingsID' => (int) $w->parent_courses_headings_id,
                 'price' => $priceVal,
                 'fullPrice' => $priceVal,
-                'priceListType' => $priceListType,
+                'priceListType' => $priceListType ?? 'PL',
                 'priceListPositionName' => $priceListPositionName,
                 'pricelistPositionsTypesDVID' => $pricelistPositionsTypesDVID,
                 'dateFrom' => $dateFromStr,
@@ -462,18 +478,31 @@ class WorkshopController extends Controller
         }
 
         // 3. Resolve Full Pass details on backend (Zero-Trust)
+        //
+        // Kształt jak w portalu (wzorcowy payload setEuWorkshopGroupPrices):
+        // karnet reprezentują WSZYSTKIE objęte nim godziny jako pozycje
+        // pricelistPositionsTypesDVID=2 z PEŁNĄ ceną karnetu na każdej pozycji
+        // (deduplikacja przy sumowaniu po priceListPositionName). Syntetyczny
+        // produkt karnetu NIE jest wysyłany — portal go nie zna, a poprzedni
+        // kształt (1×typ 2 + godziny typ 6 z ceną 0) CRM mógł rozliczyć jako
+        // darmowe wejściówki.
         if ($type === 'euro') {
-            // Find all workshops covered by selected Full Passes
-            // EDM Full Pass is identified by pricelistPositionsTypesDVID == 2
-            $fullPassNames = [];
+            $selectedPasses = [];
             foreach ($selectedHours as $item) {
                 if ($item['pricelistPositionsTypesDVID'] === 2) {
-                    $fullPassNames[] = $item['priceListPositionName'];
+                    $selectedPasses[$item['priceListPositionName']] = (float) $item['fullPrice'];
                 }
             }
 
-            if (!empty($fullPassNames)) {
+            if (!empty($selectedPasses)) {
+                // Usuń syntetyczne produkty karnetów z koszyka.
+                $selectedHours = array_values(array_filter(
+                    $selectedHours,
+                    fn ($item) => $item['pricelistPositionsTypesDVID'] !== 2
+                ));
+
                 $allEuroWorkshops = WorkshopEuropean::where('website_status_id', '!=', 0)
+                    ->where('cancelled', 0)
                     ->whereDate('ends_at', '>=', now()->toDateString());
                 $this->withProductsLevel3Category($allEuroWorkshops);
                 $allEuroWorkshops = $allEuroWorkshops->get();
@@ -485,52 +514,54 @@ class WorkshopController extends Controller
                         (int) $ew->products_id
                     );
 
-                    if (count($ewPrices) > 0) {
-                        $ewPriceInfo = $ewPrices[0];
-                        $ewPassName = $ewPriceInfo['priceListPositionName'] ?? '';
-                        
-                        if (in_array($ewPassName, $fullPassNames) && (int)($ewPriceInfo['pricelistPositionsTypesDVID'] ?? 6) !== 2) {
-                            $timeRange = $ew->start_time;
-                            $timeParts = explode(' - ', $timeRange);
-                            $startTimeStr = count($timeParts) > 0 ? $timeParts[0] : '00:00';
-                            $endTimeStr = count($timeParts) > 1 ? $timeParts[1] : '23:59';
-                            $dateFromStr = $ew->starts_at ? $ew->starts_at->toDateString() . ' ' . $startTimeStr . ':00' : null;
-                            $dateToStr = $ew->ends_at ? $ew->ends_at->toDateString() . ' ' . $endTimeStr . ':00' : null;
-
-                            // Check if already in selectedHours
-                            $alreadySelected = false;
-                            foreach ($selectedHours as $sh) {
-                                if ($sh['productsID'] === (int)$ew->products_id) {
-                                    $alreadySelected = true;
-                                    break;
-                                }
-                            }
-
-                            if (!$alreadySelected) {
-                                $selectedHours[] = [
-                                    'productsID' => (int) $ew->products_id,
-                                    'coursesHeadingsID' => (int) $ew->courses_headings_id,
-                                    'parentCoursesHeadingsID' => (int) $ew->parent_courses_headings_id,
-                                    'price' => 0.0,
-                                    'fullPrice' => 0.0,
-                                    'priceListType' => 'EU',
-                                    'priceListPositionName' => $ewPassName,
-                                    'pricelistPositionsTypesDVID' => (int)($ewPriceInfo['pricelistPositionsTypesDVID'] ?? 6),
-                                    'dateFrom' => $dateFromStr,
-                                    'dateTo' => $dateToStr,
-                                    'durationMinutes' => (int) ($ewPriceInfo['durationInMinutes'] ?? 0),
-                                    'styleName' => $ew->style_name,
-                                    'courseHeadingName' => $ew->title,
-                                    'instructorId' => (int) $ew->products_id,
-                                    'name' => $ew->title,
-                                    'instructorName' => $ew->instructors,
-                                    'time' => $ew->start_time,
-                                    'styleID' => $ew->products_level3_category_id ?? $ew->category_id,
-                                    'isPassIncluded' => true,
-                                ];
-                            }
-                        }
+                    if (count($ewPrices) === 0) {
+                        continue;
                     }
+
+                    $ewPriceInfo = $ewPrices[0];
+                    $ewPassName = $ewPriceInfo['priceListPositionName'] ?? '';
+
+                    if (!array_key_exists($ewPassName, $selectedPasses)) {
+                        continue;
+                    }
+                    if ((int) ($ewPriceInfo['pricelistPositionsTypesDVID'] ?? 6) === 2) {
+                        continue; // to sam produkt karnetu, nie godzina
+                    }
+
+                    // Godzina wybrana też pojedynczo — karnetowa wersja ją zastępuje.
+                    $selectedHours = array_values(array_filter(
+                        $selectedHours,
+                        fn ($sh) => $sh['productsID'] !== (int) $ew->products_id
+                    ));
+
+                    $timeParts = explode(' - ', (string) $ew->start_time);
+                    $startTimeStr = trim($timeParts[0] ?? '') !== '' ? trim($timeParts[0]) : '00:00';
+                    $endTimeStr = trim($timeParts[1] ?? '') !== '' ? trim($timeParts[1]) : '23:59';
+                    $dateFromStr = $ew->starts_at ? $ew->starts_at->toDateString() . ' ' . $startTimeStr . ':00' : null;
+                    $dateToStr = $ew->ends_at ? $ew->ends_at->toDateString() . ' ' . $endTimeStr . ':00' : null;
+
+                    $passPrice = $selectedPasses[$ewPassName];
+
+                    $selectedHours[] = [
+                        'productsID' => (int) $ew->products_id,
+                        'coursesHeadingsID' => (int) $ew->courses_headings_id,
+                        'parentCoursesHeadingsID' => (int) $ew->parent_courses_headings_id,
+                        'price' => $passPrice,
+                        'fullPrice' => $passPrice,
+                        'priceListType' => $this->classifyPriceListType($ewPassName, $ewPriceInfo['priceListTemplateName'] ?? '') ?? 'PL',
+                        'priceListPositionName' => $ewPassName,
+                        'pricelistPositionsTypesDVID' => 2,
+                        'dateFrom' => $dateFromStr,
+                        'dateTo' => $dateToStr,
+                        'durationMinutes' => (int) ($ewPriceInfo['durationInMinutes'] ?? 0),
+                        'styleName' => $ew->style_name,
+                        'courseHeadingName' => $ew->title,
+                        'instructorId' => (int) $ew->products_id,
+                        'name' => $ew->title,
+                        'instructorName' => $ew->instructors,
+                        'time' => $ew->start_time,
+                        'styleID' => $ew->products_level3_category_id ?? $ew->category_id,
+                    ];
                 }
             }
         }

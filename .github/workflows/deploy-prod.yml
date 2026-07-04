@@ -60,6 +60,23 @@ jobs:
               exit 1
             fi
 
+            for key in FIREBASE_PROJECT_ID FIREBASE_CREDENTIALS; do
+              if ! grep -Eq "^${key}=.+" .env.docker; then
+                echo "BŁĄD: brak ${key} w /srv/eds-prod/.env.docker."
+                exit 1
+              fi
+            done
+            if ! grep -qx 'FIREBASE_CREDENTIALS=storage/firebase/firebase-service-account.json' .env.docker; then
+              echo "BŁĄD: FIREBASE_CREDENTIALS musi wskazywać storage/firebase/firebase-service-account.json."
+              exit 1
+            fi
+
+            FIREBASE_SECRET="$PROD_PATH/secrets/firebase-service-account.json"
+            if [ ! -s "$FIREBASE_SECRET" ]; then
+              echo "BŁĄD: brak konta serwisowego Firebase: $FIREBASE_SECRET"
+              exit 1
+            fi
+
             # Zatrzymanie stacka przed aktualizacją (wolumeny zostają).
             docker compose -p mobile_1_laravel down || true
             dc down || true
@@ -110,6 +127,12 @@ jobs:
 
             echo "Assigning permissions inside volumes..."
             dc run --rm --no-deps -u root php sh -lc 'mkdir -p storage/logs storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing bootstrap/cache && chown -R www-data:www-data storage bootstrap/cache && chmod -R 775 storage bootstrap/cache'
+
+            echo "Installing Firebase credentials in protected storage..."
+            dc run --rm --no-deps -u root \
+              -v "$FIREBASE_SECRET:/tmp/firebase-service-account.json:ro" \
+              php sh -lc 'mkdir -p storage/firebase && cp /tmp/firebase-service-account.json storage/firebase/firebase-service-account.json && chown www-data:www-data storage/firebase/firebase-service-account.json && chmod 600 storage/firebase/firebase-service-account.json'
+            dc run --rm --no-deps php php -r '$path="storage/firebase/firebase-service-account.json"; $data=json_decode(file_get_contents($path), true); if (!is_array($data) || empty($data["project_id"]) || empty($data["client_email"]) || empty($data["private_key"])) { fwrite(STDERR, "Invalid Firebase service account JSON\n"); exit(1); } if ($data["project_id"] !== getenv("FIREBASE_PROJECT_ID")) { fwrite(STDERR, "Firebase project_id does not match FIREBASE_PROJECT_ID\n"); exit(1); } echo "Firebase credentials OK\n";'
 
             echo "Running Laravel tasks..."
             dc run --rm --no-deps php composer install --no-dev --optimize-autoloader

@@ -13,7 +13,22 @@ class CampController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Camp::query()->where('website_status_id', '!=', 0)->where('cancelled', 0);
+        // Warunki sprzedażowe jak w portalu: turnusy zakończone znikają
+        // z listy, a domyślnie pokazujemy tylko oferty z wolnymi miejscami
+        // (portal liczy dostępność na żywo z CRM). availableOnly=0 pozwala
+        // świadomie pobrać też zamknięte.
+        $query = Camp::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
+            ->where(function ($q) {
+                $q->whereNull('ends_at')
+                    ->orWhereDate('ends_at', '>=', now()->toDateString());
+            });
+
+        if (!$request->has('availableOnly') || $request->boolean('availableOnly')) {
+            $query->where('is_closed', 0)->where('available_places', '>', 0);
+        }
+
         $this->applyFilters($query, $request);
 
         $items = $query->orderBy('starts_at')->get();
@@ -30,8 +45,14 @@ class CampController extends Controller
      */
     public function show(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
-        $camp = Camp::where('crm_id', $id)
-            ->orWhere('id', $id)
+        // Te same warunki co index() — anulowany/ukryty turnus nie może być
+        // otwierany ani zamawiany po ID (portal blokuje wg statusu WWW).
+        $camp = Camp::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
+            ->where(function ($q) use ($id) {
+                $q->where('crm_id', $id)->orWhere('id', $id);
+            })
             ->firstOrFail();
 
         $mapped = $this->mapCamp($camp);
@@ -88,9 +109,7 @@ class CampController extends Controller
         if ($request->filled('offerType')) {
             $query->where('offer_type', $request->input('offerType'));
         }
-        if ($request->boolean('availableOnly')) {
-            $query->where('is_closed', 0)->where('available_places', '>', 0);
-        }
+        // availableOnly obsługiwane w index() (domyślnie włączone).
     }
 
     private function mapCamp(Camp $camp): array
