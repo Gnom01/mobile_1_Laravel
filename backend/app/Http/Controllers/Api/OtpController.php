@@ -62,9 +62,7 @@ class OtpController
             'attempts'   => 0,
         ]);
 
-        $appHash = $this->resolveAppHash($request);
-
-        $msg = "<#> Kod logowania1: {$code}. Wazny 5 min.\n{$appHash}";
+        $msg = $this->buildOtpSmsMessage("Kod logowania: {$code}. Wazny 5 min.", $request);
 
         $res = $sms->sendOtp($phone, $msg, (bool) config('services.sms.test_mode', false));
 
@@ -210,9 +208,7 @@ class OtpController
             'attempts'   => 0,
         ]);
 
-        $appHash = $this->resolveAppHash($request);
-
-        $msg = "<#> Kod rejestracji: {$code}. Wazny 5 min.\n{$appHash}";
+        $msg = $this->buildOtpSmsMessage("Kod rejestracji: {$code}. Wazny 5 min.", $request);
 
         $res = $sms->sendOtp($phone, $msg, (bool) config('services.sms.test_mode', false));
 
@@ -519,23 +515,30 @@ class OtpController
     // ─────────────────────────────────────────────
 
     /**
-     * Ustala hash SMS Retriever doklejany do treści SMS.
+     * Buduje treść SMS z kodem, dopasowaną do platformy nadawcy żądania.
      *
-     * Priorytet: hash przesłany przez aplikację (pole `appHash`) — dzięki temu
-     * autouzupełnianie działa dla każdego wariantu podpisu (debug/dev/prod/Play),
-     * bo aplikacja zna swój aktualny hash. Fallback: stała z config/.env.
-     * Walidacja formatu (11 znaków, alfabet base64) chroni przed wstrzyknięciem
-     * dowolnej treści do SMS.
+     * Android (aplikacja przysłała `appHash`): format SMS Retriever —
+     * "<#> {tekst}\n{hash}". Hash bierzemy WYŁĄCZNIE z żądania (aplikacja zna
+     * swój aktualny hash dla każdego wariantu podpisu debug/dev/prod/Play).
+     *
+     * iOS / brak hasha: czysty tekst bez "<#>" i bez hasha. Sygnatura
+     * aplikacji to mechanizm wyłącznie androidowy — iOS podpowiada kod przez
+     * systemowy QuickType, któremu prefiks "<#>" i doklejony hash przeszkadzają
+     * w rozpoznaniu kodu. Wcześniejszy fallback na stały SMS_APP_HASH z .env
+     * wysyłał na iOS przeterminowany hash androidowy (bezużyteczny szum).
+     *
+     * Walidacja formatu hasha (11 znaków, alfabet base64) chroni przed
+     * wstrzyknięciem dowolnej treści do SMS.
      */
-    private function resolveAppHash(Request $request): string
+    private function buildOtpSmsMessage(string $text, Request $request): string
     {
         $provided = trim((string) $request->input('appHash', ''));
 
         if ($provided !== '' && preg_match('/^[A-Za-z0-9+\/=_-]{11}$/', $provided) === 1) {
-            return $provided;
+            return "<#> {$text}\n{$provided}";
         }
 
-        return (string) config('services.sms.app_hash', '');
+        return $text;
     }
 
     /**

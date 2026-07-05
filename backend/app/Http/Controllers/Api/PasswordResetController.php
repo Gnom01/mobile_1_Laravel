@@ -54,8 +54,7 @@ class PasswordResetController
             'attempts'   => 0,
         ]);
 
-        $appHash = $this->resolveAppHash($request);
-        $msg = "<#> Kod do resetu hasla: {$code}. Wazny 5 min.\n{$appHash}";
+        $msg = $this->buildOtpSmsMessage("Kod do resetu hasla: {$code}. Wazny 5 min.", $request);
 
         $res = $sms->sendOtp($phone, $msg, (bool) config('services.sms.test_mode', false));
 
@@ -340,17 +339,18 @@ class PasswordResetController
     }
 
     /**
-     * Ustala hash SMS Retriever doklejany do treści SMS.
-     * Priorytet: `appHash` z aplikacji (poprawny dla każdego wariantu podpisu);
-     * fallback: stała z config/.env. Walidacja formatu chroni przed wstrzyknięciem.
+     * Treść SMS z kodem wg platformy: Android (appHash z żądania) — format
+     * SMS Retriever "<#> …\n{hash}"; iOS/brak hasha — czysty tekst (QuickType
+     * na iOS nie używa hasha, a prefiks i doklejony stary hash z .env
+     * psuły rozpoznawanie kodu). Walidacja formatu chroni przed wstrzyknięciem.
      */
-    private function resolveAppHash(Request $request): string
+    private function buildOtpSmsMessage(string $text, Request $request): string
     {
         $provided = trim((string) $request->input('appHash', ''));
         if ($provided !== '' && preg_match('/^[A-Za-z0-9+\/=_-]{11}$/', $provided) === 1) {
-            return $provided;
+            return "<#> {$text}\n{$provided}";
         }
-        return (string) config('services.sms.app_hash', '');
+        return $text;
     }
 
     /**
