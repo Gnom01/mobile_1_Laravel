@@ -174,13 +174,49 @@ class CrmOrderClient
         string $returnUrl,
         string $guid
     ): ?array {
-        $endpoint = '/Orders/CalculateProductForUser';
-
         // CRM OnLineSchedulePayment parses "x/usersID/scheduleID" per entry, comma-separated
         $schedulesParam = implode(',', array_map(
             fn (int $id) => "0/{$usersId}/{$id}",
             $scheduleIds
         ));
+
+        return $this->sendOnlineSchedulePayment($schedulesParam, $usersId, $localizationsId, $paymentMethodsDvid, $returnUrl, $guid);
+    }
+
+    /**
+     * Wariant initiateOnlinePayment dla ekranu „Opłać" (raty): jedna płatność
+     * może obejmować raty różnych uczestników (dzieci), więc każda pozycja
+     * niesie własne usersID, a top-level usersID to płatnik (rodzic).
+     *
+     * $entries — tablice ['localizationsID' => .., 'usersID' => .., 'scheduleID' => ..]
+     */
+    public function initiateSchedulePayment(
+        array  $entries,
+        int    $payerUsersId,
+        int    $localizationsId,
+        int    $paymentMethodsDvid,
+        string $returnUrl,
+        string $guid,
+        string $buyerNip = ''
+    ): ?array {
+        $schedulesParam = implode(',', array_map(
+            fn (array $e) => ((int) ($e['localizationsID'] ?? 0)) . '/' . ((int) $e['usersID']) . '/' . ((int) $e['scheduleID']),
+            $entries
+        ));
+
+        return $this->sendOnlineSchedulePayment($schedulesParam, $payerUsersId, $localizationsId, $paymentMethodsDvid, $returnUrl, $guid, $buyerNip);
+    }
+
+    private function sendOnlineSchedulePayment(
+        string $schedulesParam,
+        int    $usersId,
+        int    $localizationsId,
+        int    $paymentMethodsDvid,
+        string $returnUrl,
+        string $guid,
+        string $buyerNip = ''
+    ): ?array {
+        $endpoint = '/Orders/CalculateProductForUser';
 
         $payload = [
             'keyController'            => 'onLineSchedulePayment',
@@ -189,7 +225,7 @@ class CrmOrderClient
             'current_LocalizationsID'  => $localizationsId,
             'paymentMethodsDVID'       => $paymentMethodsDvid,
             'urlLink'                  => $returnUrl,
-            'NIP'                      => '',
+            'NIP'                      => $buyerNip,
         ];
 
         // allowRetry=false: creating a payment is not idempotent

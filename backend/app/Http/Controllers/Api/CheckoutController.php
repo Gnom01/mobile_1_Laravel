@@ -10,12 +10,14 @@ use App\Models\CheckoutSession;
 use App\Models\PaymentItem;
 use App\Models\UsersPaymentsSchedule;
 use App\Models\UsersRelation;
-use App\Services\CrmPortalCheckoutService;
+use App\Services\Order\CrmOrderClient;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class CheckoutController extends Controller
 {
-    public function startScheduleCheckout(Request $request, CrmPortalCheckoutService $crmCheckout)
+    public function startScheduleCheckout(Request $request, CrmOrderClient $crmClient)
     {
         $validated = $request->validate([
             'schedule_ids' => 'required|array|min:1',
@@ -57,17 +59,76 @@ class CheckoutController extends Controller
         }
 
         $amount = (float) $schedules->sum('paymentAmount');
-        $returnUrl = $validated['return_url']
-            ?? config('services.crm.mobile_checkout_return_url')
-            ?? config('app.url');
 
-        $portalResult = $crmCheckout->startSchedulePayment(
-            $user,
-            $schedules,
-            (string) $returnUrl,
-            (int) ($validated['payment_method'] ?? 5),
-            $validated['buyer_nip'] ?? null
-        );
+        // Flutter potrafi wysłać return_url='' — '??' nie łapie pustego stringa
+        $returnUrl = trim((string) ($validated['return_url'] ?? ''));
+        if ($returnUrl === '') {
+            $returnUrl = (string) (config('services.crm.mobile_checkout_return_url') ?? config('app.url'));
+        }
+
+        // Raty mogą należeć do różnych uczestników (dzieci), płatnikiem jest rodzic
+        $entries = $schedules->map(fn ($s) => [
+            'localizationsID' => (int) $s->localizationsID,
+            'usersID' => (int) $s->usersID,
+            'scheduleID' => (int) $s->usersPaymentsSchedulesID,
+        ])->all();
+
+        $guid = (string) Str::uuid();
+
+        try {
+            $body = $crmClient->initiateSchedulePayment(
+                $entries,
+                (int) $user->UsersID,
+                (int) $localizationIds->first(),
+                (int) ($validated['payment_method'] ?? 5),
+                $returnUrl,
+                $guid,
+                trim((string) ($validated['buyer_nip'] ?? ''))
+            );
+        } catch (\Throwable $e) {
+            Log::error('Schedule checkout: CRM payment initiation failed', [
+                'guid' => $guid,
+                'user_id' => $user->UsersID,
+                'error' => $e->getMessage(),
+            ]);
+            $body = null;
+        }
+
+        if ($body === null) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Nie udało się zainicjować płatności. Spróbuj ponownie za chwilę.',
+            ], 502);
+        }
+
+        $token = $body['token'] ?? $body['html'] ?? null;
+        $sessionId = $body['sessionID'] ?? $body['sessionId'] ?? null;
+        $redirectUrl = $body['redirect_url'] ?? $body['payment_url'] ?? $body['url'] ?? null;
+
+        // CRM zwraca token P24/PayNow albo od razu pełny URL — jak w pozostałych
+        // torach płatności mobile budujemy link z szablonu tylko dla gołego tokena.
+        if (!$redirectUrl && $token) {
+            if (str_starts_with((string) $token, 'http')) {
+                $redirectUrl = (string) $token;
+            } else {
+                $template = (string) config('services.crm.payment_token_url_template', '');
+                if ($template !== '') {
+                    $redirectUrl = Str::replace('{token}', (string) $token, $template);
+                }
+            }
+        }
+
+        if (!$redirectUrl) {
+            Log::error('Schedule checkout: CRM returned no payment link', [
+                'guid' => $guid,
+                'user_id' => $user->UsersID,
+                'crm_body' => $body,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'CRM nie zwrócił linku płatności. Spróbuj ponownie za chwilę.',
+            ], 502);
+        }
 
         $checkout = CheckoutSession::create([
             'crm_user_id' => $user->UsersID,
@@ -76,10 +137,10 @@ class CheckoutController extends Controller
             'localization_id' => $localizationIds->first(),
             'amount' => $amount,
             'selected_schedule_ids' => $scheduleIds->all(),
-            'crm_session_id' => $portalResult['crm_session_id'],
-            'crm_payment_token' => $portalResult['crm_payment_token'],
-            'redirect_url' => $portalResult['redirect_url'],
-            'remote_payload' => $portalResult['raw'],
+            'crm_session_id' => $sessionId,
+            'crm_payment_token' => $token,
+            'redirect_url' => $redirectUrl,
+            'remote_payload' => $body,
         ]);
 
         return response()->json([
