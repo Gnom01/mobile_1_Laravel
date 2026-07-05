@@ -305,14 +305,29 @@ class ContactController extends Controller
         return in_array($participantId, $this->accessibleParticipants($userId), true);
     }
 
-    /** ID grup, do których chodzi uczestnik. */
-    private function userGroupIds(int $userId): array
+    /**
+     * Grupy uczestnika z aktywnych umów: [coursesHeadingsID => nazwa].
+     *
+     * `usersproducts` i `usersschedules` zawierają także wpisy historyczne,
+     * dlatego nie mogą wyznaczać listy instruktorów dostępnych do kontaktu.
+     */
+    private function participantGroups(int $userId): array
     {
-        $a = DB::table('usersproducts')->where('usersid', $userId)->where('cancelled', 0)
-            ->distinct()->pluck('coursesheadingsid')->all();
-        $b = DB::table('usersschedules')->where('usersid', $userId)->where('cancelled', 0)
-            ->distinct()->pluck('coursesheadingsid')->all();
-        return array_values(array_unique(array_map('intval', array_merge($a, $b))));
+        $rows = DB::table('contracts')
+            ->where('usersID', $userId)
+            ->where('cancelled', 0)
+            ->where('coursesHeadingsID', '>', 0)
+            ->get(['coursesHeadingsID', 'courseHeadingName']);
+
+        $groups = [];
+        foreach ($rows as $row) {
+            $groupId = (int) $row->coursesHeadingsID;
+            if ($groupId > 0 && !isset($groups[$groupId])) {
+                $groups[$groupId] = trim((string) $row->courseHeadingName);
+            }
+        }
+
+        return $groups;
     }
 
     /**
@@ -320,33 +335,45 @@ class ContactController extends Controller
      */
     private function instructorsForParticipant(int $participantId): array
     {
-        $groupIds = $this->userGroupIds($participantId);
-        if (empty($groupIds)) {
+        $participantGroups = $this->participantGroups($participantId);
+        if (empty($participantGroups)) {
             return [];
         }
 
-        // Nazwy grup z coursesheadings (pełny zbiór, nie z wąskiej tabeli courses).
-        $groupNames = DB::table('coursesheadings')
-            ->whereIn('CoursesHeadingsID', $groupIds)
-            ->pluck('CourseHeadingName', 'CoursesHeadingsID');
-
-        // Instruktorzy grup wyznaczani z harmonogramu (scheduleseventssettlements.instructorsIDList),
-        // bo `courses` zawiera tylko podzbiór „oferty WWW".
-        $scheduleRows = DB::table('scheduleseventssettlements')
+        // Powiązanie grupa → instruktor jest synchronizowane z CRM w tabeli
+        // courses.instructorEmployeesIDList. Historyczny harmonogram nie jest
+        // właściwym źródłem aktualnej listy osób do kontaktu.
+        $courses = DB::table('courses')
             ->where('cancelled', 0)
-            ->whereIn('coursesHeadingsID', $groupIds)
-            ->where('instructorsIDList', '<>', '')
-            ->select('coursesHeadingsID', 'instructorsIDList')
-            ->distinct()
-            ->get();
+            ->whereIn('coursesHeadingsID', array_keys($participantGroups))
+            ->where('instructorEmployeesIDList', '<>', '')
+            ->get([
+                'coursesHeadingsID',
+                'courseHeadingName',
+                'instructorEmployeesIDList',
+            ]);
 
         $byEmployee = [];
-        foreach ($scheduleRows as $r) {
-            $eids = array_filter(array_map('trim', explode(',', (string) $r->instructorsIDList)));
-            $gname = $groupNames[$r->coursesHeadingsID] ?? '';
-            foreach ($eids as $eid) {
+        foreach ($courses as $course) {
+            $groupId = (int) $course->coursesHeadingsID;
+            $groupName = trim((string) $course->courseHeadingName);
+            if ($groupName === '') {
+                $groupName = $participantGroups[$groupId] ?? '';
+            }
+
+            $employeeIds = preg_split(
+                '/\s*,\s*/',
+                trim((string) $course->instructorEmployeesIDList),
+                -1,
+                PREG_SPLIT_NO_EMPTY
+            ) ?: [];
+
+            foreach ($employeeIds as $eid) {
                 if (is_numeric($eid)) {
-                    $byEmployee[(int) $eid]['groups'][$gname] = true;
+                    $employeeId = (int) $eid;
+                    if ($employeeId > 0) {
+                        $byEmployee[$employeeId]['groups'][$groupName] = true;
+                    }
                 }
             }
         }
@@ -356,6 +383,7 @@ class ContactController extends Controller
 
         $employees = DB::table('employees')
             ->whereIn('EmployeesID', array_keys($byEmployee))
+            ->where('Cancelled', 0)
             ->get(['EmployeesID', 'UsersID', 'FirstName', 'LastName']);
 
         $result = [];
@@ -365,12 +393,28 @@ class ContactController extends Controller
                 continue;
             }
             $name = trim(($emp->FirstName ?? '') . ' ' . ($emp->LastName ?? ''));
-            $result[$uid] = [
-                'instructorUserId' => $uid,
-                'name'             => $name !== '' ? $name : 'Instruktor',
-                'groups'           => array_values(array_filter(array_keys($byEmployee[$emp->EmployeesID]['groups'] ?? []))),
-            ];
+            if (!isset($result[$uid])) {
+                $result[$uid] = [
+                    'instructorUserId' => $uid,
+                    'name'             => $name !== '' ? $name : 'Instruktor',
+                    'groups'           => [],
+                ];
+            }
+            foreach (array_keys($byEmployee[(int) $emp->EmployeesID]['groups'] ?? []) as $groupName) {
+                if ($groupName !== '') {
+                    $result[$uid]['groups'][$groupName] = true;
+                }
+            }
         }
+
+        foreach ($result as &$instructor) {
+            $groups = array_keys($instructor['groups']);
+            sort($groups, SORT_NATURAL | SORT_FLAG_CASE);
+            $instructor['groups'] = $groups;
+        }
+        unset($instructor);
+
+        uasort($result, fn ($a, $b) => strnatcasecmp($a['name'], $b['name']));
 
         return $result;
     }

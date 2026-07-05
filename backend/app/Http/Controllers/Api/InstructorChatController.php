@@ -253,28 +253,31 @@ class InstructorChatController extends Controller
             ->pluck('EmployeesID')->map(fn ($v) => (int) $v)->all();
     }
 
-    /**
-     * Grupy instruktora (coursesHeadingsID) — z pełnego harmonogramu
-     * `scheduleseventssettlements` (instructorsIDList), nie z wąskiej tabeli
-     * `courses`. Zawężone do grup aktywnych (ostatnie 120 dni zajęć).
-     */
+    /** Grupy instruktora z courses.instructorEmployeesIDList. */
     private function instructorGroupIds(array $employeeIds): array
     {
         if (empty($employeeIds)) {
             return [];
         }
-        $cutoff = now()->subDays(120)->format('Y-m-d');
 
-        return DB::table('scheduleseventssettlements')
+        $query = DB::table('courses')
             ->where('cancelled', 0)
-            ->where('eventDate', '>=', $cutoff)
-            ->where(function ($q) use ($employeeIds) {
-                foreach ($employeeIds as $eid) {
-                    $q->orWhereRaw('FIND_IN_SET(?, instructorsIDList)', [$eid]);
-                }
-            })
-            ->distinct()
-            ->pluck('coursesHeadingsID')->map(fn ($v) => (int) $v)->filter()->values()->all();
+            ->where('instructorEmployeesIDList', '<>', '');
+        $query->where(function ($q) use ($employeeIds) {
+            foreach ($employeeIds as $employeeId) {
+                $q->orWhereRaw(
+                    'FIND_IN_SET(?, REPLACE(instructorEmployeesIDList, " ", ""))',
+                    [(int) $employeeId]
+                );
+            }
+        });
+
+        return $query
+            ->pluck('coursesHeadingsID')
+            ->map(fn ($v) => (int) $v)
+            ->filter()
+            ->values()
+            ->all();
     }
 
     /** Uczestnicy wszystkich grup instruktora. */
@@ -284,11 +287,15 @@ class InstructorChatController extends Controller
         if (empty($groupIds)) {
             return [];
         }
-        $a = DB::table('usersproducts')->whereIn('coursesheadingsid', $groupIds)->where('cancelled', 0)
-            ->distinct()->pluck('usersid')->all();
-        $b = DB::table('usersschedules')->whereIn('coursesheadingsid', $groupIds)->where('cancelled', 0)
-            ->distinct()->pluck('usersid')->all();
-        return array_values(array_unique(array_map('intval', array_merge($a, $b))));
+        return DB::table('contracts')
+            ->whereIn('coursesHeadingsID', $groupIds)
+            ->where('cancelled', 0)
+            ->where('usersID', '>', 0)
+            ->distinct()
+            ->pluck('usersID')
+            ->map(fn ($v) => (int) $v)
+            ->values()
+            ->all();
     }
 
     private function parentsOf(int $userId): array
