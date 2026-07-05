@@ -257,6 +257,49 @@ class CrmOrderClient
     }
 
     /**
+     * Portalowy anty-duplikat zapisu na kurs: CheckUserForPurchaseKey.
+     * Zwraca: 0 = wolne, >0 = uczestnik już zapisany, -1 = umowa w procesowaniu,
+     * null = nie udało się sprawdzić (traktować nie-blokująco).
+     */
+    public function checkUserForPurchaseKey(
+        string $purchaseKey,
+        string $dateFrom,
+        int    $usersId,
+        string $guid = ''
+    ): ?int {
+        if ($purchaseKey === '') {
+            return null;
+        }
+
+        $endpoint = '/Orders/CalculateProductForUser';
+        $payload  = [
+            'keyController'           => 'CheckUserForPurchaseKey',
+            'purchaseKey'             => $purchaseKey,
+            'dateFrom'                => $dateFrom,
+            'usersID'                 => $usersId,
+            'current_LocalizationsID' => '0',
+        ];
+
+        [$rawBody, $httpStatus, $durationMs, $error] = $this->executeWithRetry('POST', $endpoint, $payload, $guid, true);
+        $envelope = $this->extractCrmJson($rawBody);
+        $this->logRequest($guid, $endpoint, 'POST', $payload, $this->sanitizeResponse($envelope), $httpStatus, $durationMs, $error);
+
+        if ($error !== null || $httpStatus >= 400) {
+            return null;
+        }
+
+        $body = $envelope['body'] ?? null;
+        if (is_array($body)) {
+            $body = $body['result'] ?? $body[0] ?? null;
+        }
+        if ($body === null || !is_numeric($body)) {
+            return null;
+        }
+
+        return (int) $body;
+    }
+
+    /**
      * Krok płatności warsztatów — portal wysyła OrderPayment przez
      * POST /OrdersPay/payPortal z płaskim body. Wcześniej mobile wysyłał
      * kopertę {type:'OrderPayment'} na /Orders/createOrder, którego CRM

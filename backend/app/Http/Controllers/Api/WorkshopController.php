@@ -50,8 +50,14 @@ class WorkshopController extends Controller
      */
     public function showYgm(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
-        $workshop = WorkshopYgm::where('crm_id', $id)
-            ->orWhere('id', $id)
+        // Te same warunki co index — anulowany/ukryty warsztat nie może być
+        // otwierany po ID.
+        $workshop = WorkshopYgm::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
+            ->where(function ($q) use ($id) {
+                $q->where('crm_id', $id)->orWhere('id', $id);
+            })
             ->firstOrFail();
 
         $mapped = $this->mapWorkshop($workshop);
@@ -112,8 +118,14 @@ class WorkshopController extends Controller
      */
     public function showEuropean(int $id, \App\Services\CourseHeadingPricingService $pricingService)
     {
-        $workshop = WorkshopEuropean::where('crm_id', $id)
-            ->orWhere('id', $id)
+        // Te same warunki co index — anulowany/ukryty warsztat nie może być
+        // otwierany po ID.
+        $workshop = WorkshopEuropean::query()
+            ->where('website_status_id', '!=', 0)
+            ->where('cancelled', 0)
+            ->where(function ($q) use ($id) {
+                $q->where('crm_id', $id)->orWhere('id', $id);
+            })
             ->firstOrFail();
 
         $mapped = $this->mapWorkshop($workshop);
@@ -566,7 +578,9 @@ class WorkshopController extends Controller
             }
         }
 
-        // 4. Overlap Conflict Check
+        // 4. Conflict Check — semantyka portalu: kolizją jest wyłącznie
+        // IDENTYCZNA minuta startu dwóch pozycji niekarnetowych (portal nie
+        // blokuje nakładania przedziałów ani pozycji objętych karnetem).
         for ($i = 0; $i < count($selectedHours); $i++) {
             for ($j = $i + 1; $j < count($selectedHours); $j++) {
                 $item1 = $selectedHours[$i];
@@ -576,13 +590,8 @@ class WorkshopController extends Controller
                     continue;
                 }
 
-                if ($item1['dateFrom'] && $item1['dateTo'] && $item2['dateFrom'] && $item2['dateTo']) {
-                    $start1 = Carbon::parse($item1['dateFrom']);
-                    $end1 = Carbon::parse($item1['dateTo']);
-                    $start2 = Carbon::parse($item2['dateFrom']);
-                    $end2 = Carbon::parse($item2['dateTo']);
-
-                    if ($start1->lt($end2) && $start2->lt($end1)) {
+                if ($item1['dateFrom'] && $item2['dateFrom']) {
+                    if (Carbon::parse($item1['dateFrom'])->equalTo(Carbon::parse($item2['dateFrom']))) {
                         return response()->json([
                             'success' => false,
                             'message' => "Konflikt terminów pomiędzy warsztatami: {$item1['courseHeadingName']} a {$item2['courseHeadingName']}."
@@ -604,16 +613,11 @@ class WorkshopController extends Controller
             }
         }
 
-        // 6. Calculate Discounts (Zero-Trust YGM)
+        // 6. Calculate Discounts (Zero-Trust YGM) — liczniki $plCount/$euCount
+        // policzone przy budowie koszyka klasyfikacją zgodną z walidatorem CRM
+        // (pozycje bez markera PL/EU nie liczą się do progów).
         $discountPercentage = 0.0;
         if ($type === 'ygm') {
-            $plCount = 0;
-            $euCount = 0;
-            foreach ($selectedHours as $item) {
-                if ($item['priceListType'] === 'PL') $plCount++;
-                if ($item['priceListType'] === 'EU') $euCount++;
-            }
-
             if ($plCount >= 6 && $euCount >= 2) {
                 $discountPercentage = 20.0;
             } elseif ($plCount >= 3 && $euCount >= 1) {
@@ -628,17 +632,53 @@ class WorkshopController extends Controller
         // Idempotencja: użyj guida przysłanego przez klienta, inaczej wygeneruj nowy.
         $trackingId = (string) ($request->input('guid') ?: Str::uuid());
 
-        // CRM createOrder NIE jest idempotentny → atomowy zamek po guid blokuje
-        // duplikat (double-tap/retry) na 10 min. Przy błędzie zamek jest zwalniany
-        // (patrz catch/return niżej), by nieudana próba nie blokowała ponowienia.
+        // Trwała idempotencja na order_requests (jak wzorcowy tor /api/orders):
+        // retry po udanej płatności zwraca zapisany link zamiast 409, a rekord
+        // przeżywa restart/flush cache'a (wcześniej jedynym stanem był Cache
+        // na 10 min, nieczyszczony po sukcesie).
+        $orderRequest = OrderRequest::firstOrCreate(
+            ['guid' => $trackingId],
+            [
+                'user_id'       => $authUserId,
+                'payer_user_id' => $authUserId,
+                'status'        => OrderRequest::STATUS_PENDING,
+                'payload_hash'  => hash('sha256', json_encode([
+                    $type, $categoryID, $participantID, collect($selectedIDs)->sort()->values(),
+                ])),
+                'payload_json'  => [
+                    'offerType'           => 'workshopCheckout',
+                    'type'                => $type,
+                    'categoryID'          => $categoryID,
+                    'participantID'       => $participantID,
+                    'selectedProductsIDs' => $selectedIDs,
+                ],
+            ]
+        );
+
+        if ($orderRequest->isAlreadySuccessful() && $orderRequest->payment_url) {
+            return response()->json([
+                'success'    => true,
+                'paymentUrl' => $orderRequest->payment_url,
+                'cached'     => true,
+            ]);
+        }
+
+        // Krótki zamek cache dodatkowo gasi double-tap w oknie przetwarzania.
         $idemGuid = trim((string) $request->input('guid', ''));
-        if ($idemGuid !== '' && !\Illuminate\Support\Facades\Cache::add("ws-checkout:{$idemGuid}", 1, now()->addMinutes(10))) {
+        if ($idemGuid !== '' && !Cache::add("ws-checkout:{$idemGuid}", 1, now()->addMinutes(10))) {
             return response()->json([
                 'success' => false,
                 'message' => 'To zamówienie jest już przetwarzane. Sprawdź listę płatności.',
                 'code'    => 'order_already_processing',
             ], 409);
         }
+
+        $orderRequest->update([
+            'status'    => OrderRequest::STATUS_PROCESSING,
+            'locked_at' => now(),
+            'attempts'  => $orderRequest->attempts + 1,
+        ]);
+
         $productsLevel2DVID = $type === 'ygm' ? 55 : 56;
 
         $savePayload = [
@@ -657,62 +697,135 @@ class WorkshopController extends Controller
 
         try {
             $crmClient->calculateWorkshopPricing($savePayload, $trackingId);
+        } catch (CrmOrderException $e) {
+            // Błąd biznesowy CRM (409 rozjazd cen, 400 brak cennika) — wcześniej
+            // był połykany i flow szedł do płatności bez koszyka w CRM.
+            $this->failWorkshopCheckout($orderRequest, $idemGuid, $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'CRM odrzucił koszyk: ' . $e->getMessage(),
+            ], 400);
         } catch (\Exception $e) {
-            if ($idemGuid !== '') \Illuminate\Support\Facades\Cache::forget("ws-checkout:{$idemGuid}");
+            $this->failWorkshopCheckout($orderRequest, $idemGuid, $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Błąd zapisu koszyka w CRM: ' . $e->getMessage()
             ], 500);
         }
 
-        // 8. Submit OrderPayment
-        $orderPaymentData = [
-            'type' => 'OrderPayment',
-            'body' => [
-                'guid' => $trackingId,
-                'paymentMethodsP24' => '5',
-                'returnUrl' => 'https://panelklienta.egurrola.com/Pulpit',
-                'current_LocalizationsID' => -1,
-            ],
-        ];
+        // 8. Płatność jak w portalu: POST /OrdersPay/payPortal (guid → CRM zna
+        // koszyk), z mobilnym returnUrl zamiast portalowego Pulpitu.
+        $returnUrl = (string) config('services.crm.mobile_checkout_return_url', config('app.url'));
 
         try {
-            $response = $crmClient->createOrder($orderPaymentData, $trackingId);
-            
-            $rawPayload = $response->raw;
-            $paymentUrl = $rawPayload['payment_url'] ?? $rawPayload['payment_token'] ?? $rawPayload['html'] ?? $rawPayload['token'] ?? null;
+            $envelope = $crmClient->payPortal($trackingId, $returnUrl);
+
+            $paymentUrl = $envelope['payment_url']
+                ?? $envelope['paymentUrl']
+                ?? $envelope['html']
+                ?? $envelope['token']
+                ?? (is_array($envelope['body'] ?? null)
+                    ? ($envelope['body']['payment_url'] ?? $envelope['body']['html'] ?? $envelope['body']['token'] ?? null)
+                    : null);
+
+            // Token P24/PayNow bez pełnego URL → zbuduj link z szablonu (jak
+            // pozostałe tory płatności mobile).
+            if ($paymentUrl && !str_starts_with((string) $paymentUrl, 'http')) {
+                $template = (string) config('services.crm.payment_token_url_template', '');
+                if ($template !== '') {
+                    $paymentUrl = str_replace('{token}', (string) $paymentUrl, $template);
+                }
+            }
 
             if ($paymentUrl) {
+                $orderRequest->update([
+                    'status'            => OrderRequest::STATUS_CRM_SUCCESS,
+                    'payment_url'       => (string) $paymentUrl,
+                    'crm_response_json' => $envelope,
+                    'processed_at'      => now(),
+                    'error_message'     => null,
+                ]);
+                if ($idemGuid !== '') Cache::forget("ws-checkout:{$idemGuid}");
+
+                // Lokalna projekcja: kontrakt/grupy/płatności pojawią się w apce
+                // bez czekania na pełny crm:sync (co 5 min).
+                PullUserWorkshopsGroupsJob::dispatch();
+                PullPaymentsJob::dispatch();
+
                 return response()->json([
                     'success' => true,
                     'paymentUrl' => $paymentUrl,
                 ]);
             }
 
-            $requestId = $rawPayload['requestId'] ?? null;
-            $recheck = $rawPayload['recheck'] ?? false;
-
-            if ($recheck && $requestId) {
-                return response()->json([
-                    'success' => true,
-                    'pending' => true,
-                    'requestId' => $requestId,
-                ]);
-            }
-
-            if ($idemGuid !== '') \Illuminate\Support\Facades\Cache::forget("ws-checkout:{$idemGuid}");
+            $this->failWorkshopCheckout($orderRequest, $idemGuid, 'CRM nie zwrócił linku płatności.');
             return response()->json([
                 'success' => false,
                 'message' => 'Nie udało się wygenerować linku płatności.',
             ], 500);
 
+        } catch (CrmOrderException $e) {
+            $this->failWorkshopCheckout($orderRequest, $idemGuid, $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'CRM odrzucił płatność: ' . $e->getMessage(),
+            ], 400);
         } catch (\Exception $e) {
-            if ($idemGuid !== '') \Illuminate\Support\Facades\Cache::forget("ws-checkout:{$idemGuid}");
+            $this->failWorkshopCheckout($orderRequest, $idemGuid, $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Błąd procesowania płatności: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /** Oznacza checkout jako nieudany i zwalnia zamki (cache + order_request). */
+    private function failWorkshopCheckout(OrderRequest $orderRequest, string $idemGuid, string $error): void
+    {
+        $orderRequest->update([
+            'status'        => OrderRequest::STATUS_CRM_FAILED,
+            'error_message' => mb_substr($error, 0, 1000),
+            'locked_at'     => null,
+        ]);
+        if ($idemGuid !== '') {
+            Cache::forget("ws-checkout:{$idemGuid}");
+        }
+    }
+
+    /**
+     * Cena warsztatu z products.Price — tej kolumny używa walidator CRM
+     * (tolerancja 0.01). Fallback: amount z pozycji cennika.
+     */
+    private function resolveWorkshopPrice(int $productsId, ?array $priceInfo): float
+    {
+        if ($productsId > 0) {
+            $productPrice = (float) (Product::where('ProductsID', $productsId)->value('Price') ?? 0);
+            if ($productPrice > 0) {
+                return $productPrice;
+            }
+        }
+        return $priceInfo ? (float) ($priceInfo['amount'] ?? 0) : 0.0;
+    }
+
+    /**
+     * Klasyfikacja PL/EU dokładnie jak wiążący walidator CRM
+     * (getWorkshopGroupPriceListType): konkatenacja nazwy pozycji i szablonu,
+     * najpierw 'PL', potem 'EU', bez 'INT'; brak markera → null (pozycja
+     * nieliczona do progów rabatowych).
+     */
+    private function classifyPriceListType(?string $positionName, ?string $templateName): ?string
+    {
+        $value = strtoupper(trim(($positionName ?? '') . ' ' . ($templateName ?? '')));
+        if ($value === '') {
+            return null;
+        }
+        if (str_contains($value, 'PL')) {
+            return 'PL';
+        }
+        if (str_contains($value, 'EU')) {
+            return 'EU';
+        }
+        return null;
     }
 
     /**

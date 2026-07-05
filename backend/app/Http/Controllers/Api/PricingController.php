@@ -91,6 +91,7 @@ class PricingController extends Controller
     {
         $request->validate([
             'localizationsID' => ['required', 'integer'],
+            'usersID'         => ['nullable', 'string'],
         ]);
 
         $localizationsID = (int) $request->input('localizationsID');
@@ -102,8 +103,38 @@ class PricingController extends Controller
             return response()->json(['message' => 'CRM user not found.'], 404);
         }
 
+        // Wpisowe dotyczy UCZESTNIKA, nie płatnika (portal: CheckUserEntryFee
+        // z participantUsersID). Flutter wysyła GUID uczestnika w `usersID` —
+        // wcześniej parametr był ignorowany i wynik liczył się dla rodzica,
+        // przez co wpisowe dziecka bywało błędnie pomijane albo naliczane.
+        $targetUsersId = (int) $crmUser->UsersID;
+        $participantGuid = trim((string) $request->input('usersID', ''));
+        if ($participantGuid !== '' && $participantGuid !== (string) $crmUser->guid) {
+            $participant = \App\Models\CrmUser::query()
+                ->where('guid', $participantGuid)
+                ->where('Cancelled', 0)
+                ->first(['UsersID']);
+
+            if ($participant === null) {
+                return response()->json(['message' => 'Nie znaleziono uczestnika.'], 404);
+            }
+
+            $participantId = (int) $participant->UsersID;
+            $isRelated = \Illuminate\Support\Facades\DB::table('usersrelations')
+                ->where('Parent_UsersID', (int) $crmUser->UsersID)
+                ->where('UsersID', $participantId)
+                ->where('Cancelled', 0)
+                ->exists();
+
+            if (!$isRelated) {
+                return response()->json(['message' => 'Brak uprawnień do tej osoby.'], 403);
+            }
+
+            $targetUsersId = $participantId;
+        }
+
         $result = $this->pricingService->checkForEntryFee(
-            (int) $crmUser->UsersID,
+            $targetUsersId,
             $localizationsID
         );
 

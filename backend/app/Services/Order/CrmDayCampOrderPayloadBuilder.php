@@ -23,7 +23,17 @@ final class CrmDayCampOrderPayloadBuilder
             $participantUsersId
         );
 
+        $base = CampInstallmentsFallback::apply($base);
+
         return array_merge($base, [
+            // Portal (dayCamp): orderType OrderCamp, current_LocalizationsID -1,
+            // contractPeriodFrom = data złożenia zamówienia (nie start turnusu),
+            // dataTo puste. price_LocalizationsID przekazujemy, gdy klient poda.
+            'orderType'               => 'OrderCamp',
+            'current_LocalizationsID' => -1,
+            'price_LocalizationsID'   => (int) ($payload['price_LocalizationsID'] ?? 0),
+            'contractPeriodFrom'      => now()->toIso8601String(),
+            'dataTo'                  => '',
             'turnusName'        => (string) ($payload['turnusName']        ?? ''),
             'departurePlace'    => (string) ($payload['departurePlace']    ?? ''),
             'transportOptions'  => $payload['transportOptions']  ?? [],
@@ -33,6 +43,8 @@ final class CrmDayCampOrderPayloadBuilder
             // Obiekt `form` wymagany przez CRM /Orders/createOrder dla półkolonii
             // (z dodatkowymi zgodami: marketing, Tutlo, karta kwalifikacyjna).
             'form'              => CampOrderFormBuilder::build($payload, true),
+            // Pełne dane kwalifikacyjne uczestnika — jak portal (campForm).
+            'campForm'          => (array) ($payload['campForm'] ?? []),
         ]);
     }
 }

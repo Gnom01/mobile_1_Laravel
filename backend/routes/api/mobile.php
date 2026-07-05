@@ -105,7 +105,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/orders', [OrderController::class, 'store']);
     Route::post('/orders/camps', [OrderController::class, 'store']);
     Route::post('/orders/day-camps', [OrderController::class, 'store']);
-    Route::post('/orders/workshops', [OrderController::class, 'store']);
+    // Warsztaty NIE idą przez OrderController — jedyny tor to
+    // /orders/workshops/checkout (WorkshopController); stary route wpadał
+    // w kursowy builder bez pól warsztatowych.
     Route::post('/orders/tickets', [OrderController::class, 'store']);
 
 

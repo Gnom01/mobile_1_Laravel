@@ -118,6 +118,57 @@ class OrderApplicationService
                 throw new CrmOrderException('Niekompletne dane oferty (brak produktu/kursu).', 422, ['invalid_offer']);
             }
 
+            // Re-walidacja dostępności oferty tuż przed zapisem — odpowiednik
+            // portalowej bramy websiteStatusesDVID∈{2,3} sprawdzanej przy każdym
+            // wejściu. Dane lokalne są z sync co 5 min, więc to ostatnia linia
+            // obrony przed zapisem na wycofaną/zamkniętą ofertę.
+            $availabilityError = $this->validateOfferAvailability(
+                (string) ($offerType ?? 'course'),
+                (int) ($crmBody['coursesHeadingsID'] ?? 0),
+                (int) ($crmBody['productsID'] ?? 0)
+            );
+            if ($availabilityError !== null) {
+                throw new CrmOrderException($availabilityError, 422, ['offer_unavailable']);
+            }
+
+            // Portal blokuje zamówienie, gdy PŁATNIK jest małoletni (wiek z PESEL,
+            // warunek ostry: > 18). Mobile nie miało żadnego odpowiednika.
+            if ($offerType === null || $offerType === 'course') {
+                $payerId = (int) ($crmBody['payer_UsersID'] ?? 0);
+                if ($payerId > 0 && !$this->payerIsAdult($payerId)) {
+                    throw new CrmOrderException(
+                        'Płatnikiem umowy musi być osoba pełnoletnia.',
+                        422,
+                        ['payer_underage']
+                    );
+                }
+
+                // Portalowy anty-duplikat (CheckUserForPurchaseKey) — chroni też
+                // przed podwójnym kontraktem przy retry po crm_failed/timeout,
+                // bo CRM createOrder nie jest idempotentny. null = brak
+                // odpowiedzi CRM → nie blokujemy (ostatecznie decyduje CRM).
+                $dupCheck = $this->crmClient->checkUserForPurchaseKey(
+                    (string) ($crmBody['purchaseKey'] ?? ''),
+                    (string) ($crmBody['contractPeriodFrom'] ?? now()->toDateString()),
+                    (int) ($crmBody['usersID'] ?? $data->userId),
+                    $data->guid
+                );
+                if ($dupCheck !== null && $dupCheck > 0) {
+                    throw new CrmOrderException(
+                        'Uczestnik jest już zapisany na ten kurs. Skontaktuj się z BOK.',
+                        409,
+                        ['duplicate_purchase']
+                    );
+                }
+                if ($dupCheck === -1) {
+                    throw new CrmOrderException(
+                        'Tworzenie umowy jest w trakcie procesowania. Spróbuj ponownie za chwilę.',
+                        409,
+                        ['purchase_processing']
+                    );
+                }
+            }
+
             $crmResponse = $this->crmClient->createOrder($crmBody, $data->guid);
         } catch (CrmOrderException | CrmIntegrationException $e) {
             // ── Step 7: CRM failure ───────────────────────────────────────────
@@ -162,7 +213,12 @@ class OrderApplicationService
                 ));
 
                 if (!empty($scheduleIds)) {
-                    $returnUrl   = (string) ($crmBody['returnUrl'] ?? config('services.crm.mobile_checkout_return_url', ''));
+                    // Flutter wysyła returnUrl='' — operator ?? nie łapie pustego
+                    // stringa, przez co fallback na config nigdy nie działał.
+                    $returnUrl = trim((string) ($crmBody['returnUrl'] ?? ''));
+                    if ($returnUrl === '') {
+                        $returnUrl = (string) config('services.crm.mobile_checkout_return_url', '');
+                    }
                     $paymentData = $this->crmClient->initiateOnlinePayment(
                         $scheduleIds,
                         $usersId,
@@ -200,6 +256,28 @@ class OrderApplicationService
             'payment_url'          => $paymentUrl,
             'locked_at'            => null,
         ]);
+
+        // Celowane odświeżenie lokalnych tabel wg typu oferty — bez tego kupione
+        // zapisy/bilety/miejsca pojawiały się w apce dopiero po pełnym crm:sync
+        // (do ~5 min). Non-fatal.
+        try {
+            $offerTypeForPull = (string) ($orderRequest->payload_json['offerType']
+                ?? $orderRequest->payload_json['offer_type'] ?? 'course');
+            if ($offerTypeForPull === 'ticket') {
+                \App\Jobs\PullUsersTicketsJob::dispatch();
+            } elseif (in_array($offerTypeForPull, ['camp', 'summerCourse'], true)) {
+                \App\Jobs\PullCampsJob::dispatch();
+            } elseif ($offerTypeForPull === 'dayCamp') {
+                \App\Jobs\PullDayCampsJob::dispatch();
+            } else {
+                \App\Jobs\PullUsersSchedulesJob::dispatch();
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Targeted pull dispatch after order failed (non-fatal)', [
+                'guid'  => $data->guid,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         try {
             $offerType = $orderRequest->payload_json['offerType'] ?? $orderRequest->payload_json['offer_type'] ?? 'course';
@@ -285,5 +363,113 @@ class OrderApplicationService
 
         // ── Step 12 ───────────────────────────────────────────────────────────
         return OrderResult::fromOrderRequest($orderRequest->fresh(), false);
+    }
+
+    /**
+     * Wiek płatnika z PESEL — jak portal (awaitContractConfirm): zamówienie
+     * przechodzi tylko przy wieku > 18 (warunek ostry). Brak/niepoprawny PESEL
+     * nie blokuje (część kont CRM nie ma PESEL) — wtedy decyduje CRM.
+     */
+    private function payerIsAdult(int $payerUsersId): bool
+    {
+        $pesel = (string) (DB::table('users')
+            ->where('UsersID', $payerUsersId)
+            ->value('Pesel') ?? '');
+        $pesel = preg_replace('/\D/', '', $pesel);
+
+        if (strlen($pesel) !== 11) {
+            return true; // brak danych → nie blokujemy po stronie mobile
+        }
+
+        $year  = (int) substr($pesel, 0, 2);
+        $month = (int) substr($pesel, 2, 2);
+        $day   = (int) substr($pesel, 4, 2);
+
+        if ($month >= 81) { $year += 1800; $month -= 80; }
+        elseif ($month >= 61) { $year += 2200; $month -= 60; }
+        elseif ($month >= 41) { $year += 2100; $month -= 40; }
+        elseif ($month >= 21) { $year += 2000; $month -= 20; }
+        else { $year += 1900; }
+
+        if (!checkdate($month, $day, $year)) {
+            return true;
+        }
+
+        $age = \Carbon\Carbon::createFromDate($year, $month, $day)->age;
+
+        return $age > 18;
+    }
+
+    /**
+     * Serwerowa re-walidacja dostępności oferty przed wysyłką do CRM —
+     * odpowiednik portalowej bramy (websiteStatusesDVID ∈ {2,3}, cancelled=0,
+     * daty i miejsca). Gdy oferty nie ma w lokalnej bazie (świeży rekord przed
+     * syncem), przepuszczamy — CRM jest ostatecznym walidatorem.
+     *
+     * @return string|null komunikat błędu albo null gdy oferta sprzedawalna
+     */
+    private function validateOfferAvailability(string $offerType, int $coursesHeadingsId, int $productsId): ?string
+    {
+        $today = now()->toDateString();
+
+        if (in_array($offerType, ['camp', 'summerCourse', 'dayCamp', 'ticket'], true)) {
+            $table = match ($offerType) {
+                'camp', 'summerCourse' => 'camps',
+                'dayCamp'              => 'day_camps',
+                'ticket'               => 'tickets',
+            };
+
+            $offer = DB::table($table)
+                ->where(function ($q) use ($productsId, $coursesHeadingsId) {
+                    $q->where('products_id', $productsId);
+                    if ($coursesHeadingsId > 0) {
+                        $q->orWhere('courses_headings_id', $coursesHeadingsId);
+                    }
+                })
+                ->orderByDesc('id')
+                ->first();
+
+            if ($offer === null) {
+                return null; // brak lokalnej kopii — decyduje CRM
+            }
+
+            if ((int) ($offer->website_status_id ?? 0) === 0 || (int) ($offer->cancelled ?? 0) === 1) {
+                return 'Ta oferta nie jest już dostępna w sprzedaży.';
+            }
+            if ((int) ($offer->is_closed ?? 0) === 1 || (int) ($offer->available_places ?? 0) <= 0) {
+                return 'Brak wolnych miejsc na tę ofertę.';
+            }
+            if (!empty($offer->ends_at) && substr((string) $offer->ends_at, 0, 10) < $today) {
+                return 'Ta oferta już się zakończyła.';
+            }
+            if ($offerType === 'ticket') {
+                if (!empty($offer->sale_starts_at) && (string) $offer->sale_starts_at > now()->toDateTimeString()) {
+                    return 'Sprzedaż biletów jeszcze się nie rozpoczęła.';
+                }
+                if (!empty($offer->sale_ends_at) && (string) $offer->sale_ends_at < now()->toDateTimeString()) {
+                    return 'Sprzedaż biletów została zakończona.';
+                }
+            }
+
+            return null;
+        }
+
+        // Kurs regularny (i pozostałe typy oparte o coursesheadings).
+        $course = DB::table('courses')
+            ->where('coursesHeadingsID', $coursesHeadingsId)
+            ->first(['websiteStatusesDVID', 'cancelled']);
+
+        if ($course === null) {
+            return null; // brak lokalnej kopii — decyduje CRM
+        }
+
+        if ((int) ($course->cancelled ?? 0) === 1) {
+            return 'Ten kurs został wycofany ze sprzedaży.';
+        }
+        if (!in_array((int) ($course->websiteStatusesDVID ?? 0), [2, 3], true)) {
+            return 'Zapisy na ten kurs są obecnie niedostępne.';
+        }
+
+        return null;
     }
 }
