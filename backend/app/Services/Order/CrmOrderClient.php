@@ -164,7 +164,10 @@ class CrmOrderClient
      * CRM calls OnLineSchedulePayment which registers the transaction and returns a token.
      *
      * $scheduleIds — usersPaymentsSchedulesID values from fetchPaymentSchedules
-     * Returns ['token' => '...', 'sessionID' => '...', 'html' => '...'] or null on failure.
+     * Returns ['token' => '...', 'sessionID' => '...', 'html' => '...'].
+     *
+     * @throws CrmOrderException       błąd biznesowy CRM (status 4xx w kopercie)
+     * @throws CrmIntegrationException błąd połączenia / HTTP
      */
     public function initiateOnlinePayment(
         array  $scheduleIds,
@@ -173,7 +176,7 @@ class CrmOrderClient
         int    $paymentMethodsDvid,
         string $returnUrl,
         string $guid
-    ): ?array {
+    ): array {
         // CRM OnLineSchedulePayment parses "x/usersID/scheduleID" per entry, comma-separated
         $schedulesParam = implode(',', array_map(
             fn (int $id) => "0/{$usersId}/{$id}",
@@ -188,23 +191,28 @@ class CrmOrderClient
      * może obejmować raty różnych uczestników (dzieci), więc każda pozycja
      * niesie własne usersID, a top-level usersID to płatnik (rodzic).
      *
-     * $entries — tablice ['localizationsID' => .., 'usersID' => .., 'scheduleID' => ..]
+     * Format 1:1 jak w portalu (to_pay.js): pozycje "płatnik/uczestnik/rata",
+     * current_LocalizationsID = -1.
+     *
+     * $entries — tablice ['usersID' => .., 'scheduleID' => ..]
+     *
+     * @throws CrmOrderException       błąd biznesowy CRM (status 4xx w kopercie)
+     * @throws CrmIntegrationException błąd połączenia / HTTP
      */
     public function initiateSchedulePayment(
         array  $entries,
         int    $payerUsersId,
-        int    $localizationsId,
         int    $paymentMethodsDvid,
         string $returnUrl,
         string $guid,
         string $buyerNip = ''
-    ): ?array {
+    ): array {
         $schedulesParam = implode(',', array_map(
-            fn (array $e) => ((int) ($e['localizationsID'] ?? 0)) . '/' . ((int) $e['usersID']) . '/' . ((int) $e['scheduleID']),
+            fn (array $e) => $payerUsersId . '/' . ((int) $e['usersID']) . '/' . ((int) $e['scheduleID']),
             $entries
         ));
 
-        return $this->sendOnlineSchedulePayment($schedulesParam, $payerUsersId, $localizationsId, $paymentMethodsDvid, $returnUrl, $guid, $buyerNip);
+        return $this->sendOnlineSchedulePayment($schedulesParam, $payerUsersId, -1, $paymentMethodsDvid, $returnUrl, $guid, $buyerNip);
     }
 
     private function sendOnlineSchedulePayment(
@@ -215,7 +223,7 @@ class CrmOrderClient
         string $returnUrl,
         string $guid,
         string $buyerNip = ''
-    ): ?array {
+    ): array {
         $endpoint = '/Orders/CalculateProductForUser';
 
         $payload = [
@@ -239,16 +247,20 @@ class CrmOrderClient
                 'error'      => $error,
                 'httpStatus' => $httpStatus,
             ]);
-            return null;
+            throw new CrmIntegrationException(
+                $error !== null ? "CRM connection error: {$error}" : "CRM HTTP {$httpStatus}",
+                $httpStatus
+            );
         }
 
         $crmStatus = (int) ($body['status'] ?? 200);
         if ($crmStatus >= 400) {
             Log::warning('CRM initiateOnlinePayment business error', [
+                'guid'      => $guid,
                 'crmStatus' => $crmStatus,
                 'message'   => $body['message'] ?? '',
             ]);
-            return null;
+            throw new CrmOrderException($this->extractErrorMessage($body, $crmStatus), $crmStatus, $body);
         }
 
         return $body;

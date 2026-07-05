@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\Order\CrmOrderException;
 use App\Http\Controllers\Controller;
 use App\Jobs\PullPaymentsItemsJob;
 use App\Jobs\PullPaymentsJob;
@@ -68,7 +69,6 @@ class CheckoutController extends Controller
 
         // Raty mogą należeć do różnych uczestników (dzieci), płatnikiem jest rodzic
         $entries = $schedules->map(fn ($s) => [
-            'localizationsID' => (int) $s->localizationsID,
             'usersID' => (int) $s->usersID,
             'scheduleID' => (int) $s->usersPaymentsSchedulesID,
         ])->all();
@@ -79,22 +79,29 @@ class CheckoutController extends Controller
             $body = $crmClient->initiateSchedulePayment(
                 $entries,
                 (int) $user->UsersID,
-                (int) $localizationIds->first(),
                 (int) ($validated['payment_method'] ?? 5),
                 $returnUrl,
                 $guid,
                 trim((string) ($validated['buyer_nip'] ?? ''))
             );
+        } catch (CrmOrderException $e) {
+            // Błąd biznesowy CRM — pokazujemy konkretną przyczynę, nie ogólnik
+            Log::error('Schedule checkout: CRM rejected payment', [
+                'guid' => $guid,
+                'user_id' => $user->UsersID,
+                'crm_status' => $e->getCode(),
+                'crm_message' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'CRM odrzucił płatność: ' . $e->getMessage(),
+            ], 400);
         } catch (\Throwable $e) {
             Log::error('Schedule checkout: CRM payment initiation failed', [
                 'guid' => $guid,
                 'user_id' => $user->UsersID,
                 'error' => $e->getMessage(),
             ]);
-            $body = null;
-        }
-
-        if ($body === null) {
             return response()->json([
                 'success' => false,
                 'message' => 'Nie udało się zainicjować płatności. Spróbuj ponownie za chwilę.',
