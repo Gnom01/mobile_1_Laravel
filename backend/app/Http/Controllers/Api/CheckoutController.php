@@ -61,6 +61,37 @@ class CheckoutController extends Controller
 
         $amount = (float) $schedules->sum('paymentAmount');
 
+        // Ponowna próba dla tych samych rat: pierwsze wywołanie utworzyło już
+        // płatność online w CRM i kolejne kończy się tam błędem „Błędna kwota
+        // płatności online" (dopóki CRON CRM nie anuluje wiszącej transakcji).
+        // Zwracamy więc link z istniejącej sesji zamiast dublować płatność.
+        $sortedIds = $scheduleIds->sort()->values()->all();
+        $existing = CheckoutSession::query()
+            ->where('crm_user_id', $user->UsersID)
+            ->where('type', 'schedule_payment')
+            ->where('status', 'pending_payment')
+            ->whereNotNull('redirect_url')
+            ->where('created_at', '>=', now()->subMinutes(30))
+            ->latest('id')
+            ->get()
+            ->first(fn ($cs) => collect($cs->selected_schedule_ids)
+                ->map(fn ($id) => (int) $id)->sort()->values()->all() === $sortedIds);
+
+        if ($existing) {
+            return response()->json([
+                'success' => true,
+                'checkout' => [
+                    'id' => $existing->id,
+                    'status' => $existing->status,
+                    'amount' => (float) $existing->amount,
+                    'redirect_url' => $existing->redirect_url,
+                    'crm_session_id' => $existing->crm_session_id,
+                    'crm_payment_token' => $existing->crm_payment_token,
+                    'resumed' => true,
+                ],
+            ]);
+        }
+
         // Flutter potrafi wysłać return_url='' — '??' nie łapie pustego stringa
         $returnUrl = trim((string) ($validated['return_url'] ?? ''));
         if ($returnUrl === '') {
