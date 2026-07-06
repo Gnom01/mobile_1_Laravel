@@ -55,8 +55,6 @@ class PaymentController extends Controller
             ->whereIn('userspaymentsschedules.usersID', $allUserIds)
             ->where('userspaymentsschedules.Cancelled', 0)
             ->where('userspaymentsschedules.paymentStatusesDVID', 1)
-            ->orderBy('userspaymentsschedules.orderValue')
-            ->orderBy('userspaymentsschedules.paymentStatusesDVID')
             ->orderBy('userspaymentsschedules.paymentDate')
             ->get();
 
