@@ -128,8 +128,12 @@ class PaymentController extends Controller
         // 2. Fetch Parent Payments
         $placeholders = implode(',', array_fill(0, count($allUserIds), '?'));
 
+        // Warunek "p.usersID OR p.payer_UsersID OR pi.usersID" w jednym WHERE
+        // uniemożliwiał użycie indeksów (OR po kolumnie złączonej tabeli =>
+        // pełny skan payments × paymentsitems). UNION trzech tanich,
+        // indeksowanych podzapytań zawęża płatności do rodziny od razu.
         $parentSql = "
-            SELECT 
+            SELECT
                 p.usersID, p.paymentsID, p.paymentDate, p.cancelled, p.paymentMethodsDVID,
                 d.Name AS paymentMethodsName, p.recepcionist_UsersID, u.fullName,
                 ups.positionName,
@@ -151,10 +155,12 @@ class PaymentController extends Controller
                 AND p.paymentStatusesDVID IN (1,2,3,4)
                 AND p.paymentMethodsDVID <> 4
                 AND p.paymentAmount > 0
-                AND (
-                    p.usersID IN ($placeholders)
-                    OR p.payer_UsersID IN ($placeholders)
-                    OR pi.usersID IN ($placeholders)
+                AND p.paymentsID IN (
+                    SELECT paymentsID FROM payments      WHERE usersID IN ($placeholders)
+                    UNION
+                    SELECT paymentsID FROM payments      WHERE payer_UsersID IN ($placeholders)
+                    UNION
+                    SELECT paymentsID FROM paymentsitems WHERE usersID IN ($placeholders)
                 )
             ORDER BY p.paymentsID DESC
         ";
@@ -167,8 +173,11 @@ class PaymentController extends Controller
             collect($allPayment)->unique('paymentsID')->all()
         );
 
-        // 3. For each payment, fetch child items
+        // 3. Fetch child items for ALL payments in one query (previously a
+        // separate 9-join query PER payment — N+1 was the main slowdown).
         $childPlaceholders = implode(',', array_fill(0, count($allUserIds), '?'));
+        $paymentIds = array_map(fn ($p) => $p->paymentsID, $allPayment);
+        $paymentIdPlaceholders = implode(',', array_fill(0, max(count($paymentIds), 1), '?'));
 
         $childSql = "
             SELECT
@@ -227,14 +236,18 @@ class PaymentController extends Controller
                 ON d3.DictionaryName = 'PaymentStatuses'
                 AND p.paymentStatusesDVID = d3.ValueID
                 AND d3.Cancelled = 0
-            WHERE p.paymentsID = ?
+            WHERE p.paymentsID IN ($paymentIdPlaceholders)
                 AND pis.usersID IN ($childPlaceholders)
         ";
 
+        $childRowsByPayment = empty($paymentIds)
+            ? collect()
+            : collect(DB::select($childSql, array_merge($paymentIds, $allUserIds)))
+                ->groupBy('paymentsID');
+
         foreach ($allPayment as $index => $payment) {
-            $allPayment[$index]->allPayments = DB::select(
-                $childSql,
-                array_merge([$payment->paymentsID], $allUserIds)
+            $allPayment[$index]->allPayments = array_values(
+                ($childRowsByPayment[$payment->paymentsID] ?? collect())->all()
             );
         }
 
