@@ -134,35 +134,73 @@ class PaymentController extends Controller
         // indeksowanych podzapytań zawęża płatności do rodziny od razu.
         $parentSql = "
             SELECT
-                p.usersID, p.paymentsID, p.paymentDate, p.cancelled, p.paymentMethodsDVID,
-                d.Name AS paymentMethodsName, p.recepcionist_UsersID, u.fullName,
+                p.usersID,
+                p.paymentsID,
+                p.paymentDate,
+                p.cancelled,
+                p.paymentMethodsDVID,
+                d.Name AS paymentMethodsName,
+                p.recepcionist_UsersID,
+                u.fullName,
                 ups.positionName,
                 ups.usersPaymentsSchedulesID,
                 pi.itemName,
-                p.localizationsID, l.clientsID, l.localizationName,
+                p.localizationsID,
+                l.clientsID,
+                l.localizationName,
                 p.paymentAmount AS paymentItemAmount,
                 d1.Name AS productPaymentsName,
-                p.paymentStatusesDVID, d3.Name AS paymentStatusesName
-            FROM payments p
-            LEFT JOIN dictionaries d  ON d.valueID = p.paymentMethodsDVID AND d.DictionaryName = 'PaymentMethods' AND d.Cancelled = 0
-            LEFT JOIN dictionaries d1 ON d1.DictionaryName = 'paymentTypes' AND d1.ValueID = p.paymentMethodsDVID AND d1.Cancelled = 0
-            LEFT JOIN dictionaries d3 ON d3.DictionaryName = 'PaymentStatuses' AND d3.ValueID = p.paymentStatusesDVID AND d3.Cancelled = 0
-            LEFT JOIN localizations l ON l.LocalizationsID = p.localizationsID AND l.Cancelled = 0
-            LEFT JOIN paymentsitems pi ON pi.paymentsID = p.paymentsID AND pi.cancelled = 0
-            LEFT JOIN users u         ON u.UsersID = p.usersID AND u.Cancelled = 0
-            LEFT JOIN userspaymentsschedules ups ON ups.usersPaymentsSchedulesID = pi.usersPaymentsSchedulesID AND ups.cancelled = 0
+                p.paymentStatusesDVID,
+                d3.Name AS paymentStatusesName
+            FROM (
+                SELECT paymentsID
+                FROM payments
+                 WHERE usersID IN ($placeholders)
+
+                UNION
+
+                SELECT paymentsID
+                FROM payments
+                WHERE payer_UsersID IN ($placeholders)
+
+                UNION
+
+                SELECT paymentsID
+                FROM paymentsitems
+                WHERE usersID IN ($placeholders)
+            ) x
+            JOIN payments p 
+                ON p.paymentsID = x.paymentsID
+            LEFT JOIN dictionaries d  
+                ON d.valueID = p.paymentMethodsDVID
+                AND d.DictionaryName = 'PaymentMethods'
+                AND d.Cancelled = 0
+            LEFT JOIN dictionaries d1 
+                ON d1.DictionaryName = 'paymentTypes'
+                AND d1.ValueID = p.paymentMethodsDVID
+                AND d1.Cancelled = 0
+            LEFT JOIN dictionaries d3 
+                ON d3.DictionaryName = 'PaymentStatuses'
+                AND d3.ValueID = p.paymentStatusesDVID
+                AND d3.Cancelled = 0
+            LEFT JOIN localizations l 
+                ON l.LocalizationsID = p.localizationsID
+                AND l.Cancelled = 0
+            LEFT JOIN paymentsitems pi 
+                ON pi.paymentsID = p.paymentsID
+                AND pi.cancelled = 0
+            LEFT JOIN users u         
+                ON u.UsersID = p.usersID
+                AND u.Cancelled = 0
+            LEFT JOIN userspaymentsschedules ups 
+                ON ups.usersPaymentsSchedulesID = pi.usersPaymentsSchedulesID
+                AND ups.cancelled = 0
             WHERE p.cancelled = 0
                 AND p.paymentStatusesDVID IN (1,2,3,4)
                 AND p.paymentMethodsDVID <> 4
                 AND p.paymentAmount > 0
-                AND p.paymentsID IN (
-                    SELECT paymentsID FROM payments      WHERE usersID IN ($placeholders)
-                    UNION
-                    SELECT paymentsID FROM payments      WHERE payer_UsersID IN ($placeholders)
-                    UNION
-                    SELECT paymentsID FROM paymentsitems WHERE usersID IN ($placeholders)
-                )
             ORDER BY p.paymentsID DESC
+ 
         ";
 
         $allPayment = DB::select($parentSql, array_merge($allUserIds, $allUserIds, $allUserIds));
