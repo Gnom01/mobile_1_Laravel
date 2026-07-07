@@ -9,7 +9,7 @@ return [
     'default_buffer_seconds' => 5,
     'default_page_size' => 1000,
     'delay_warning_minutes' => 15,
-    'lock_store' => env('CRM_SYNC_LOCK_STORE', 'file'),
+    'lock_store' => env('CRM_SYNC_LOCK_STORE', 'database'),
 
     /*
      * Resource descriptors are the contract for every CRM -> mobile table.
@@ -55,6 +55,9 @@ return [
             'field_mapping' => 'job',
             'page_size' => 1000,
             'extra_params' => ['current_LocalizationsID' => '0'],
+            'max_execution_time' => 900,
+            'lock_seconds' => 1800,
+            'progress_log_every' => 50,
             'mode' => 'full_then_incremental',
         ],
 

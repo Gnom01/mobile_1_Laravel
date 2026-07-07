@@ -48,6 +48,9 @@ class CrmSyncRegistry
             'sourceTable' => $config['source_table'] ?? null,
             'fieldMapping' => $config['field_mapping'] ?? 'raw',
             'extraParams' => $config['extra_params'] ?? [],
+            'maxExecutionTime' => $config['max_execution_time'] ?? null,
+            'lockSeconds' => $config['lock_seconds'] ?? null,
+            'progressLogEvery' => $config['progress_log_every'] ?? null,
         ];
     }
 }

@@ -57,35 +57,36 @@ class CrmSyncService
         $fieldMap   = $config['fieldMap'];
         $responseKey = $config['responseKey'] ?? 'body';
         $maxTime    = $config['maxExecutionTime'] ?? 180; // 3 minutes default
-        $lockTime   = 300; // 5 minute lock
+        $lockTime   = (int)($config['lockSeconds'] ?? max(900, $maxTime + 900));
+        $progressLogEvery = (int)($config['progressLogEvery'] ?? 100);
 
         $logPrefix = "[SYNC:{$resource}]";
 
-        Log::info("{$logPrefix} Starting sync");
-
-        $schemaErrors = $this->validateConfig($config);
-        if (!empty($schemaErrors)) {
-            Log::error("{$logPrefix} Config validation failed", ['errors' => $schemaErrors]);
-            return ['status' => 'validation_failed', 'message' => implode('; ', $schemaErrors), 'failed' => count($schemaErrors)];
-        }
-
-        $lockStore = config('crm_sync.lock_store', 'file');
-        $lock = Cache::store($lockStore)->lock("sync:{$resource}", $lockTime);
-        $lockAcquired = false;
-
-        // if (!$lock->get()) {
-        //     Log::warning("{$logPrefix} Already running, skipping.");
-        //     return ['status' => 'skipped', 'reason' => 'locked'];
-        // }
-
-        $lockAcquired = true;
-
         $startTime = microtime(true);
-        $totalProcessed = 0;
         $runLog = null;
         $state = null;
+        $lock = null;
+        $lockAcquired = false;
+
+        Log::info("{$logPrefix} Starting sync");
 
         try {
+            $schemaErrors = $this->validateConfig($config);
+            if (!empty($schemaErrors)) {
+                Log::error("{$logPrefix} Config validation failed", ['errors' => $schemaErrors]);
+                return ['status' => 'validation_failed', 'message' => implode('; ', $schemaErrors), 'failed' => count($schemaErrors)];
+            }
+
+            $lockStore = config('crm_sync.lock_store', 'database');
+            $lock = Cache::store($lockStore)->lock("sync:{$resource}", $lockTime);
+
+            if (!$lock->get()) {
+                Log::warning("{$logPrefix} Already running, skipping.");
+                return ['status' => 'skipped', 'reason' => 'locked'];
+            }
+
+            $lockAcquired = true;
+
             $state = SyncState::firstOrCreate(
                 ['resource' => $resource],
                 [
@@ -95,6 +96,8 @@ class CrmSyncService
                     'last_synced_id' => 0,
                 ]
             );
+
+            $this->markStaleRunLogs($resource, $lockTime, $logPrefix);
 
             if (Schema::hasTable('sync_run_logs')) {
                 $runLog = SyncRunLog::create([
@@ -109,10 +112,10 @@ class CrmSyncService
 
             if ($state->is_full_synced) {
                 // === INCREMENTAL MODE ===
-                $result = $this->syncIncremental($state, $config, $startTime, $maxTime, $logPrefix, $runLog);
+                $result = $this->syncIncremental($state, $config, $startTime, $maxTime, $logPrefix, $runLog, $progressLogEvery);
             } else {
                 // === FULL SYNC MODE ===
-                $result = $this->syncFull($state, $config, $startTime, $maxTime, $logPrefix, $runLog);
+                $result = $this->syncFull($state, $config, $startTime, $maxTime, $logPrefix, $runLog, $progressLogEvery);
             }
 
             $state->last_attempt_at = now();
@@ -137,7 +140,7 @@ class CrmSyncService
             }
             return ['status' => 'error', 'message' => $e->getMessage()];
         } finally {
-            if ($lockAcquired) {
+            if ($lockAcquired && $lock) {
                 $lock->release();
             }
             $elapsed = round(microtime(true) - $startTime, 2);
@@ -151,7 +154,7 @@ class CrmSyncService
      * Sends lastSyncedId to CRM so it returns only records with ID > lastSyncedId.
      * No page/offset — efficient even on large tables.
      */
-    private function syncFull(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix, ?SyncRunLog $runLog = null): array
+    private function syncFull(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix, ?SyncRunLog $runLog = null, int $progressLogEvery = 100): array
     {
         $endpoint    = $config['endpoint'];
         $modelClass  = $config['model'];
@@ -198,8 +201,9 @@ class CrmSyncService
             $resp = $this->crm->post($endpoint, $params);
 
             if ($resp->failed()) {
-                Log::error("{$logPrefix} API request failed. Status: " . $resp->status());
-                break;
+                $message = "API request failed. Status: " . $resp->status();
+                Log::error("{$logPrefix} {$message}");
+                return ['status' => 'api_error', 'message' => $message, 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed + 1, 'last_id' => $checkpointId];
             }
 
             $body  = $resp->json();
@@ -209,12 +213,19 @@ class CrmSyncService
 
             Log::info("{$logPrefix} Fetched {$itemCount} items after ID {$scanId}");
 
+            $pagePosition = 0;
             foreach ($items as $r) {
                 if (!is_array($r)) continue;
 
                 $apiPrimaryKey = $config['apiPrimaryKey'] ?? $primaryKey;
                 $id = (int)$this->recordValue($r, [$apiPrimaryKey, $primaryKey], 0);
                 if (!$id) continue;
+                $pagePosition++;
+
+                if ($this->shouldLogProgress($pagePosition, $itemCount, $progressLogEvery)) {
+                    $elapsed = round(microtime(true) - $startTime, 2);
+                    Log::info("{$logPrefix} Processing full-sync record {$pagePosition}/{$itemCount}, ID {$id}, elapsed {$elapsed}s");
+                }
 
                 if ($id > $scanId) {
                     $scanId = $id; // advance read position so pagination keeps moving forward
@@ -278,8 +289,10 @@ class CrmSyncService
 
             // Check time limit
             if ((microtime(true) - $startTime) > $maxTime) {
-                Log::info("{$logPrefix} Time limit ({$maxTime}s) reached after {$totalProcessed} records, checkpoint ID {$checkpointId}. Will continue next run.");
-                return ['status' => 'partial', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $checkpointId];
+                $elapsed = round(microtime(true) - $startTime, 2);
+                $message = "Time limit ({$maxTime}s) reached after {$totalProcessed} records, checkpoint ID {$checkpointId}. Will continue next run.";
+                Log::info("{$logPrefix} {$message}", ['elapsed_seconds' => $elapsed]);
+                return ['status' => 'partial', 'message' => $message, 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed, 'last_id' => $checkpointId];
             }
 
         } while ($itemCount >= $pageSize);
@@ -305,7 +318,7 @@ class CrmSyncService
     /**
      * Incremental sync: fetch records updated since last_sync_at.
      */
-    private function syncIncremental(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix, ?SyncRunLog $runLog = null): array
+    private function syncIncremental(SyncState $state, array $config, float $startTime, int $maxTime, string $logPrefix, ?SyncRunLog $runLog = null, int $progressLogEvery = 100): array
     {
         $endpoint   = $config['endpoint'];
         $modelClass = $config['model'];
@@ -355,8 +368,9 @@ class CrmSyncService
             $resp = $this->crm->post($endpoint, $params);
 
             if ($resp->failed()) {
-                Log::error("{$logPrefix} API request failed. Status: " . $resp->status());
-                break;
+                $message = "API request failed. Status: " . $resp->status();
+                Log::error("{$logPrefix} {$message}");
+                return ['status' => 'api_error', 'message' => $message, 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed + 1];
             }
 
             $body = $resp->json();
@@ -364,12 +378,19 @@ class CrmSyncService
             $itemCount = count($items);
             $totalFetched += $itemCount;
 
+            $pagePosition = 0;
             foreach ($items as $r) {
                 if (!is_array($r)) continue;
 
                 $apiPrimaryKey = $config['apiPrimaryKey'] ?? $primaryKey;
                 $id = (int)$this->recordValue($r, [$apiPrimaryKey, $primaryKey], 0);
                 if (!$id) continue;
+                $pagePosition++;
+
+                if ($this->shouldLogProgress($pagePosition, $itemCount, $progressLogEvery)) {
+                    $elapsed = round(microtime(true) - $startTime, 2);
+                    Log::info("{$logPrefix} Processing incremental record {$pagePosition}/{$itemCount}, ID {$id}, page {$page}, elapsed {$elapsed}s");
+                }
 
                 $whenUpdated = $this->validateDate($this->recordValue($r, $whenUpdatedKey, ''), null);
 
@@ -424,8 +445,10 @@ class CrmSyncService
 
             // Check time limit
             if ((microtime(true) - $startTime) > $maxTime) {
-                Log::info("{$logPrefix} Time limit ({$maxTime}s) reached. Will continue next run.");
-                return ['status' => 'partial', 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed];
+                $elapsed = round(microtime(true) - $startTime, 2);
+                $message = "Time limit ({$maxTime}s) reached. Will continue next run.";
+                Log::info("{$logPrefix} {$message}", ['elapsed_seconds' => $elapsed]);
+                return ['status' => 'partial', 'message' => $message, 'fetched' => $totalFetched, 'processed' => $totalProcessed, 'failed' => $totalFailed];
             }
 
         } while ($itemCount >= $pageSize);
@@ -450,6 +473,42 @@ class CrmSyncService
             'last_sync_at_after' => $state->last_sync_at,
             'error_message' => (string)($result['message'] ?? ''),
         ]);
+    }
+
+    private function markStaleRunLogs(string $resource, int $lockTime, string $logPrefix): void
+    {
+        if (!Schema::hasTable('sync_run_logs')) {
+            return;
+        }
+
+        try {
+            $staleCutoff = now()->subSeconds($lockTime);
+            $count = SyncRunLog::query()
+                ->where('resource', $resource)
+                ->where('status', 'running')
+                ->whereNull('finished_at')
+                ->where('started_at', '<', $staleCutoff)
+                ->update([
+                    'status' => 'abandoned',
+                    'finished_at' => now(),
+                    'error_message' => 'Run log was still running after lock expiry; marked abandoned by next sync start.',
+                ]);
+
+            if ($count > 0) {
+                Log::warning("{$logPrefix} Marked {$count} stale run log(s) as abandoned.");
+            }
+        } catch (\Throwable $e) {
+            Log::warning("{$logPrefix} Could not mark stale run logs: " . $e->getMessage());
+        }
+    }
+
+    private function shouldLogProgress(int $position, int $total, int $every): bool
+    {
+        if ($every <= 0) {
+            return false;
+        }
+
+        return $position === 1 || $position === $total || $position % $every === 0;
     }
 
     public function dryRun(array $config, int $sampleSize = 10): array

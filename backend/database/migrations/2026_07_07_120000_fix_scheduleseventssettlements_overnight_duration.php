@@ -14,6 +14,7 @@ return new class extends Migration
 
         DB::statement(<<<'SQL'
             ALTER TABLE `scheduleseventssettlements`
+                MODIFY `instructorsIDList` VARCHAR(255) NULL DEFAULT NULL,
                 MODIFY `endDateTime` DATETIME
                     GENERATED ALWAYS AS (
                         CASE
@@ -43,6 +44,7 @@ return new class extends Migration
 
         DB::statement(<<<'SQL'
             ALTER TABLE `scheduleseventssettlements`
+                MODIFY `instructorsIDList` VARCHAR(255) NOT NULL DEFAULT '',
                 MODIFY `endDateTime` DATETIME
                     GENERATED ALWAYS AS (ADDTIME(`eventDate`, `timeTo`)) STORED,
                 MODIFY `durationInMinutes` SMALLINT UNSIGNED

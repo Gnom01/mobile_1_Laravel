@@ -113,16 +113,11 @@ class CrmSync extends Command
         $requestedResource = strtolower((string) $this->argument('resource'));
 
         if ($requestedResource !== '') {
-            $aliases = [
-                'coursesheadings' => 'PullCoursesHeadingsJob',
-            ];
-
-            $requestedJob = $aliases[$requestedResource] ?? $this->argument('resource');
-            $requestedJob = strtolower((string) $requestedJob);
-
             $jobs = array_filter(
                 $jobs,
-                fn ($class, $name) => strtolower($name) === $requestedJob,
+                fn ($class, $name) => strtolower($name) === $requestedResource
+                    || strtolower(class_basename($class)) === $requestedResource
+                    || $this->resourceNameForJob((string) $name) === $requestedResource,
                 ARRAY_FILTER_USE_BOTH
             );
 

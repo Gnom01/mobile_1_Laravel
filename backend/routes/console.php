@@ -13,7 +13,7 @@ Artisan::command('inspire', function () {
 
 Log::info('[CONSOLE.PHP] routes/console.php loaded - registering CRM schedules');
 
-Schedule::useCache('file');
+Schedule::useCache(config('crm_sync.lock_store', 'database'));
 
 // Pojedynczy, SEKWENCYJNY przebieg synchronizacji co 5 minut.
 // `crm:sync` (bez argumentu) uruchamia wszystkie joby Pull* po kolei, w

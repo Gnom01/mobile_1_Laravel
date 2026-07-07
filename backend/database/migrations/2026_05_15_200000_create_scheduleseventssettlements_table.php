@@ -23,7 +23,7 @@ return new class extends Migration
             $table->time('timeFrom');
             $table->time('timeTo');
             $table->unsignedSmallInteger('sheduleItemTypeDVID')->default(0);
-            $table->string('instructorsIDList', 255)->default('');
+            $table->string('instructorsIDList', 255)->nullable();
             $table->unsignedSmallInteger('eventsSettlementsStatusesDVID')->default(1);
             $table->tinyInteger('cancelled')->default(0);
             $table->dateTime('whenInserted')->useCurrent();
