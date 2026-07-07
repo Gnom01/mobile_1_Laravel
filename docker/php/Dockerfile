@@ -10,6 +10,10 @@ RUN apk add --no-cache \
 RUN docker-php-ext-install \
     pdo pdo_mysql mbstring intl zip opcache
 
+# Domyślne 128M nie wystarcza dla crm:sync (paczki po 1000 rekordów) —
+# proces ginął fatalem OOM, zostawiając runy "running" i wiszące locki.
+RUN echo "memory_limit=512M" > /usr/local/etc/php/conf.d/zz-memory.ini
+
 # Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
