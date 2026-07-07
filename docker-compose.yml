@@ -128,7 +128,11 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-eds}-app:local
     restart: unless-stopped
     working_dir: /var/www/html
-    command: php artisan schedule:work --verbose --no-interaction
+    # Na starcie czyścimy mutexy withoutOverlapping i locki sync:* osierocone
+    # przez SIGKILL (deploy restartuje kontenery w trakcie runa; finally/
+    # schedule:finish wtedy nie odpala, a wiersze w cache_locks przeżywają
+    # restart) — bez tego sync stoi do 25-30 min po każdym takim deployu.
+    command: sh -lc "php artisan schedule:clear-cache || true; php artisan crm:sync-clear-locks || true; exec php artisan schedule:work --verbose --no-interaction"
     volumes:
       - ./backend:/var/www/html
       - laravel_storage:/var/www/html/storage
