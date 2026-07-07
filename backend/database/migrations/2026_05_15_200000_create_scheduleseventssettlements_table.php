@@ -32,8 +32,8 @@ return new class extends Migration
             $table->unsignedInteger('WhoUpdated_UsersID');
             $table->unsignedInteger('productsLevel2DVID')->default(0);
             $table->dateTime('startDateTime')->storedAs("addtime(`eventDate`,`timeFrom`)")->nullable();
-            $table->dateTime('endDateTime')->storedAs("addtime(`eventDate`,`timeTo`)")->nullable();
-            $table->unsignedSmallInteger('durationInMinutes')->storedAs("(time_to_sec(timediff(`timeTo`,`timeFrom`)) / 60)")->nullable();
+            $table->dateTime('endDateTime')->storedAs("case when `timeFrom` is not null and `timeTo` < `timeFrom` then addtime(date_add(`eventDate`, interval 1 day), `timeTo`) else addtime(`eventDate`,`timeTo`) end")->nullable();
+            $table->unsignedSmallInteger('durationInMinutes')->storedAs("case when `timeFrom` is null or `timeTo` is null then null when `timeTo` < `timeFrom` then (time_to_sec(timediff(`timeTo`,`timeFrom`)) / 60) + 1440 else (time_to_sec(timediff(`timeTo`,`timeFrom`)) / 60) end")->nullable();
 
             $table->unique(
                 ['schedulesID', 'cancelled', 'schedulesEventsSettlementsID'],
