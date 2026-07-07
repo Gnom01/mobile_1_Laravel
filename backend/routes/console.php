@@ -38,6 +38,20 @@ Schedule::command('crm:sync')
         Log::error('[SCHEDULER] crm:sync (all resources, sequential) failed');
     });
 
+// scheduleseventssettlements ma WŁASNY rytm co 5 minut, niezależny od
+// sekwencji powyżej (i jest z niej wyłączony — patrz CrmSync::handle).
+// Powód: pojedynczy run full-synca trwa do ~15 min (max_execution_time 900s)
+// i wpięty w sekwencję dyktowałby jej tempo wszystkim zasobom.
+// runInBackground: nie blokuje pozostałych wpisów schedulera.
+// withoutOverlapping(25): scheduler nie odpali drugiego procesu, a gdyby
+// mimo to doszło do wyścigu, lock per-resource w CrmSyncService i tak
+// kończy duplikat statusem "skipped" w ~0.01s (skip, nie kolejka).
+Schedule::command('crm:sync PullSchedulesEventsSettlementsJob')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(25)
+    ->runInBackground()
+    ->appendOutputTo(storage_path('logs/crm-sync-settlements.log'));
+
 Schedule::call(function () {
     PushNotification::query()
         ->where('status', PushNotification::STATUS_SCHEDULED)

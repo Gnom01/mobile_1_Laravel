@@ -163,6 +163,15 @@ class CrmSync extends Command
             }
         }
 
+        // Bez argumentu pomijamy scheduleseventssettlements — ma własny wpis
+        // harmonogramu co 5 minut (routes/console.php); run full-synca trwa do
+        // ~15 min i wpięty w sekwencję blokowałby pozostałe zasoby. Jawne
+        // wywołanie `crm:sync PullSchedulesEventsSettlementsJob` działa bez zmian,
+        // a reset --full powyżej nadal obejmuje także ten zasób.
+        if ($requestedResource === '') {
+            unset($jobs['PullSchedulesEventsSettlementsJob']);
+        }
+
         foreach ($jobs as $name => $jobClass) {
             Log::info("[CRM:SYNC] Starting job: {$name}");
             $this->info("Running {$name}...");
