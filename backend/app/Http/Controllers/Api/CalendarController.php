@@ -624,10 +624,15 @@ class CalendarController extends Controller
             ->values()
             ->all();
 
-        if (!empty($relatedIds)) {
-            return $relatedIds;
-        }
-
-        return [(int) $authUser->UsersID];
+        // Własne ID zalogowanego ZAWSZE w zakresie. CRM tworzy relacje
+        // odwrotne (Parent_UsersID = dziecko -> rodzic), więc konto dziecka
+        // "ma pod sobą" rodzica — bez self scope degenerował się do
+        // [ID rodzica], a rodzic nie ma kontraktów uczestniczych -> pusty
+        // kalendarz dziecka. Self w zakresie przywraca też gałąź
+        // instruktorską (in_array(auth, scope)) dla instruktora-rodzica.
+        return array_values(array_unique(array_merge(
+            [(int) $authUser->UsersID],
+            $relatedIds
+        )));
     }
 }

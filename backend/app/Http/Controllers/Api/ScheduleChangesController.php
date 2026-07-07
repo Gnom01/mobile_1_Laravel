@@ -345,10 +345,13 @@ class ScheduleChangesController extends Controller
             ->values()
             ->all();
 
-        if (!empty($relatedIds)) {
-            return $relatedIds;
-        }
-
-        return [(int) $authUser->UsersID];
+        // Własne ID zalogowanego ZAWSZE w zakresie — jak w CalendarController.
+        // CRM tworzy relacje odwrotne (Parent_UsersID = dziecko -> rodzic),
+        // więc bez self konto dziecka dostawało scope = [ID rodzica] i puste
+        // listy nieobecności/odrabiania.
+        return array_values(array_unique(array_merge(
+            [(int) $authUser->UsersID],
+            $relatedIds
+        )));
     }
 }
