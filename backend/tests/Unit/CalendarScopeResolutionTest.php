@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\CalendarController;
 use App\Http\Controllers\Api\ScheduleChangesController;
 use App\Models\CrmUser;
 use Illuminate\Support\Collection;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionMethod;
 use Tests\TestCase;
 
@@ -61,7 +62,7 @@ class CalendarScopeResolutionTest extends TestCase
         return (object) ['UsersID' => $usersId, 'guid' => $guid];
     }
 
-    /** @dataProvider controllerProvider */
+    #[DataProvider('controllerProvider')]
     public function test_child_with_reverse_relation_keeps_own_id_in_scope(string $controllerClass): void
     {
         // Konto dziecka (100) z odwrotną relacją do rodzica (200).
@@ -74,7 +75,7 @@ class CalendarScopeResolutionTest extends TestCase
         $this->assertContains(200, $scope);
     }
 
-    /** @dataProvider controllerProvider */
+    #[DataProvider('controllerProvider')]
     public function test_parent_default_scope_includes_children_and_self(string $controllerClass): void
     {
         $parent = $this->user(200, 'parent-guid');
@@ -91,7 +92,7 @@ class CalendarScopeResolutionTest extends TestCase
         $this->assertSame($scope, array_values(array_unique($scope)), 'Zakres bez duplikatów.');
     }
 
-    /** @dataProvider controllerProvider */
+    #[DataProvider('controllerProvider')]
     public function test_no_relations_falls_back_to_self(string $controllerClass): void
     {
         $user = $this->user(100, 'solo-guid');
@@ -101,7 +102,7 @@ class CalendarScopeResolutionTest extends TestCase
         $this->assertSame([100], $scope);
     }
 
-    /** @dataProvider controllerProvider */
+    #[DataProvider('controllerProvider')]
     public function test_person_guid_self_narrows_to_self(string $controllerClass): void
     {
         $user = $this->user(100, 'self-guid');
@@ -112,7 +113,7 @@ class CalendarScopeResolutionTest extends TestCase
         $this->assertSame([100], $scope, 'Jawne personGuid=self to tor widoku dziecka — wyłącznie własne ID.');
     }
 
-    /** @dataProvider controllerProvider */
+    #[DataProvider('controllerProvider')]
     public function test_person_guid_related_narrows_to_that_person(string $controllerClass): void
     {
         $parent = $this->user(200, 'parent-guid');
@@ -123,7 +124,7 @@ class CalendarScopeResolutionTest extends TestCase
         $this->assertSame([101], $scope);
     }
 
-    /** @dataProvider controllerProvider */
+    #[DataProvider('controllerProvider')]
     public function test_unknown_person_guid_is_rejected(string $controllerClass): void
     {
         $parent = $this->user(200, 'parent-guid');
