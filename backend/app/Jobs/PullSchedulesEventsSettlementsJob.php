@@ -22,6 +22,9 @@ class PullSchedulesEventsSettlementsJob implements ShouldQueue
             'primaryKey'      => 'scheduleseventssettlementsID',
             'pageSize'        => 1000,
             'responseKey'     => 'body',
+            'maxExecutionTime' => 900,
+            'lockSeconds'     => 1800,
+            'progressLogEvery'=> 50,
             'whenUpdatedKey'  => 'whenupdated',
             'orderParam'      => 'whenupdated ASC',
             'extraParams' => [
