@@ -85,6 +85,14 @@ return [
     // Program wsparcia Fundacji Świat Tańca (moduł SUP z planu Etapu I).
     // Liczby „realnego wpływu" są aktualizowane ręcznie do czasu integracji CRM.
     'support_program' => [
+        // Wyłącznik części subskrypcyjnej: false = zakładka wyłącznie
+        // informacyjna (bez zapisów i płatności). Ponowne włączenie:
+        // SUPPORT_PROGRAM_ENABLED=true w .env — kod zostaje nietknięty.
+        'enabled' => filter_var(
+            env('SUPPORT_PROGRAM_ENABLED', false),
+            FILTER_VALIDATE_BOOL,
+            FILTER_NULL_ON_FAILURE
+        ) ?? false,
         'monthly_amount' => (float) env('SUPPORT_PROGRAM_MONTHLY_AMOUNT', 5.00),
         'impact' => [
             ['value' => (int) env('SUPPORT_PROGRAM_IMPACT_SCHOLARSHIPS', 12), 'label' => 'stypendiów', 'sublabel' => 'w tym miesiącu'],

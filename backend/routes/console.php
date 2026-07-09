@@ -67,7 +67,10 @@ Schedule::call(function () {
 
 // Program wsparcia — naliczanie miesięcznych odnowień (wpłaty pending +
 // zdarzenia billing_due dla przyszłej integracji operatora płatności).
+// Uruchamiane tylko przy włączonej subskrypcji, żeby po wyłączeniu modułu
+// nie naliczać pending istniejącym subskrybentom.
 Schedule::command('support:process-renewals')
     ->dailyAt('06:00')
     ->withoutOverlapping()
+    ->when(fn () => (bool) config('services.support_program.enabled'))
     ->appendOutputTo(storage_path('logs/support-renewals.log'));

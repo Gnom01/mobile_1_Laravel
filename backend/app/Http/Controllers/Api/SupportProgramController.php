@@ -24,6 +24,23 @@ class SupportProgramController extends Controller
 {
     public function status(Request $request): JsonResponse
     {
+        // Przy wyłączonej subskrypcji zakładka jest wyłącznie informacyjna:
+        // zwracamy treści (impact/benefits) bez żadnych danych płatniczych.
+        if (!$this->subscriptionEnabled()) {
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'subscriptionEnabled' => false,
+                    'monthlyAmount' => $this->monthlyAmount(),
+                    'subscription' => null,
+                    'totalPaid' => 0,
+                    'impact' => config('services.support_program.impact'),
+                    'benefits' => config('services.support_program.benefits'),
+                    'history' => [],
+                ],
+            ]);
+        }
+
         $user = $request->user();
         $subscription = SupportSubscription::where('users_id', (int) $user->UsersID)->first();
 
@@ -43,6 +60,7 @@ class SupportProgramController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
+                'subscriptionEnabled' => true,
                 'monthlyAmount' => $this->monthlyAmount(),
                 'subscription' => $subscription ? $this->presentSubscription($subscription) : null,
                 'totalPaid' => round($totalPaid, 2),
@@ -55,6 +73,10 @@ class SupportProgramController extends Controller
 
     public function join(Request $request): JsonResponse
     {
+        if ($disabled = $this->rejectWhenDisabled()) {
+            return $disabled;
+        }
+
         $user = $request->user();
         $userId = (int) $user->UsersID;
 
@@ -105,6 +127,10 @@ class SupportProgramController extends Controller
 
     public function pause(Request $request): JsonResponse
     {
+        if ($disabled = $this->rejectWhenDisabled()) {
+            return $disabled;
+        }
+
         return $this->transition(
             $request,
             SupportSubscription::STATUS_PAUSED,
@@ -118,6 +144,10 @@ class SupportProgramController extends Controller
 
     public function resume(Request $request): JsonResponse
     {
+        if ($disabled = $this->rejectWhenDisabled()) {
+            return $disabled;
+        }
+
         // Termin = dziś — rozliczenie wznawia się od dnia wznowienia.
         return $this->transition(
             $request,
@@ -133,6 +163,10 @@ class SupportProgramController extends Controller
 
     public function cancel(Request $request): JsonResponse
     {
+        if ($disabled = $this->rejectWhenDisabled()) {
+            return $disabled;
+        }
+
         return $this->transition(
             $request,
             SupportSubscription::STATUS_CANCELLED,
@@ -147,6 +181,10 @@ class SupportProgramController extends Controller
 
     public function history(Request $request): JsonResponse
     {
+        if ($disabled = $this->rejectWhenDisabled()) {
+            return $disabled;
+        }
+
         $user = $request->user();
         $subscription = SupportSubscription::where('users_id', (int) $user->UsersID)->first();
 
@@ -250,5 +288,28 @@ class SupportProgramController extends Controller
     private function monthlyAmount(): float
     {
         return (float) config('services.support_program.monthly_amount', 5.00);
+    }
+
+    private function subscriptionEnabled(): bool
+    {
+        return (bool) config('services.support_program.enabled', false);
+    }
+
+    /**
+     * 403 dla endpointów czysto subskrypcyjnych, gdy moduł płatny jest
+     * wyłączony (SUPPORT_PROGRAM_ENABLED=false). Zakładka informacyjna
+     * (status) działa dalej.
+     */
+    private function rejectWhenDisabled(): ?JsonResponse
+    {
+        if ($this->subscriptionEnabled()) {
+            return null;
+        }
+
+        return response()->json([
+            'success' => false,
+            'error' => 'SUBSCRIPTION_DISABLED',
+            'message' => 'Subskrypcja programu wsparcia jest obecnie niedostępna.',
+        ], 403);
     }
 }
