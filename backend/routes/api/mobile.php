@@ -136,9 +136,14 @@ Route::middleware('auth:sanctum')->group(function () {
     // Instructor — ogłoszenia (blok na pulpicie)
     Route::get('/instructor/announcements', [InstructorController::class, 'announcements']);
 
-    // Instructor — rezerwacja sal (Etap B: miasta + dostępność)
+    // Instructor — rezerwacja sal
     Route::get('/instructor/room-reservations/cities', [RoomReservationController::class, 'cities']);
     Route::get('/instructor/room-reservations/availability', [RoomReservationController::class, 'availability']);
+    Route::get('/instructor/room-reservations/participants', [RoomReservationController::class, 'participants']);
+    Route::get('/instructor/room-reservations/products', [RoomReservationController::class, 'products']);
+    Route::post('/instructor/room-reservations', [RoomReservationController::class, 'store']);
+    Route::get('/instructor/room-reservations/{id}', [RoomReservationController::class, 'show'])
+        ->whereNumber('id');
 
     // Instructor — czaty grupowe (multiselect uczestników, nazwany czat)
     Route::get('/instructor/chats', [InstructorChatController::class, 'index']);

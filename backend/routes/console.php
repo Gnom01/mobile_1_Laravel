@@ -65,6 +65,13 @@ Schedule::call(function () {
         ->each(fn ($id) => SendPushNotificationJob::dispatch((int) $id));
 })->everyMinute()->name('push-notifications-dispatch')->withoutOverlapping();
 
+// Rezerwacje sal — wygaszanie nieopłaconych holdów po 15 minutach
+// (zwolnienie slotu). Osobny, częsty rytm; komenda jest lekka (jeden UPDATE).
+Schedule::command('room-reservations:expire')
+    ->everyMinute()
+    ->name('room-reservations-expire')
+    ->withoutOverlapping();
+
 // Program wsparcia — naliczanie miesięcznych odnowień (wpłaty pending +
 // zdarzenia billing_due dla przyszłej integracji operatora płatności).
 // Uruchamiane tylko przy włączonej subskrypcji, żeby po wyłączeniu modułu
