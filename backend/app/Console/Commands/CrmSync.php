@@ -24,6 +24,7 @@ use App\Jobs\PullProductsDimensionsJob;
 use App\Jobs\PullCoursesHeadingsDimensionsJob;
 use App\Jobs\PullSeasonsJob;
 use App\Jobs\PullXSchedulesJob;
+use App\Jobs\PullClassRoomsJob;
 use App\Jobs\PullDaysJob;
 use App\Jobs\PullDaysOffJob;
 use App\Jobs\PullProductsPaymentInstallmentsJob;
@@ -93,6 +94,7 @@ class CrmSync extends Command
             'PullCoursesHeadingsDimensionsJob'              => PullCoursesHeadingsDimensionsJob::class,
             'PullSeasonsJob'                                => PullSeasonsJob::class,
             'PullXSchedulesJob'                             => PullXSchedulesJob::class,
+            'PullClassRoomsJob'                             => PullClassRoomsJob::class,
             'PullDaysJob'                                   => PullDaysJob::class,
             'PullDaysOffJob'                                => PullDaysOffJob::class,
             'PullProductsPaymentInstallmentsJob'            => PullProductsPaymentInstallmentsJob::class,

@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\MobilePushController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\InstructorController;
 use App\Http\Controllers\Api\InstructorChatController;
+use App\Http\Controllers\Api\RoomReservationController;
 use App\Http\Controllers\Api\ContactController;
 
 // ───────────────────────────────────────────────
@@ -134,6 +135,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Instructor — ogłoszenia (blok na pulpicie)
     Route::get('/instructor/announcements', [InstructorController::class, 'announcements']);
+
+    // Instructor — rezerwacja sal (Etap B: miasta + dostępność)
+    Route::get('/instructor/room-reservations/cities', [RoomReservationController::class, 'cities']);
+    Route::get('/instructor/room-reservations/availability', [RoomReservationController::class, 'availability']);
 
     // Instructor — czaty grupowe (multiselect uczestników, nazwany czat)
     Route::get('/instructor/chats', [InstructorChatController::class, 'index']);
