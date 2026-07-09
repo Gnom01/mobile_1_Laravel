@@ -260,11 +260,15 @@ class UsersRelationsController extends Controller
         }
 
         if ($hasPhone) {
-            $phone = $this->normalizePhone($phoneRaw);
-            $query->where(function ($q) use ($phone) {
-                $q->whereRaw('REPLACE(Phone, " ", "") = ?', [$phone])
-                    ->orWhereRaw('REPLACE(Phone, " ", "") = ?', ['+48' . $phone])
-                    ->orWhereRaw('REPLACE(Phone, " ", "") = ?', ['48' . $phone]);
+            $phoneDigits = preg_replace('/\D+/', '', $phoneRaw);
+            if (str_starts_with($phoneDigits, '48') && strlen($phoneDigits) >= 11) {
+                $phoneDigits = substr($phoneDigits, 2);
+            }
+
+            $query->where(function ($q) use ($phoneDigits) {
+                $cleanedPhone = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(Phone, '+', ''), ' ', ''), '-', ''), '(', ''), ')', '')";
+                $q->whereRaw("$cleanedPhone = ?", [$phoneDigits])
+                  ->orWhereRaw("$cleanedPhone = ?", ['48' . $phoneDigits]);
             });
         }
 
@@ -282,6 +286,22 @@ class UsersRelationsController extends Controller
         foreach ($matches as $u) {
             $mode = $this->linkModeFor($u);
 
+            $dependents = DB::table('usersrelations as ur')
+                ->join('users as c', 'c.UsersID', '=', 'ur.UsersID')
+                ->where('ur.Parent_UsersID', $u->UsersID)
+                ->where('ur.Cancelled', 0)
+                ->where('c.Cancelled', 0)
+                ->select('c.guid', 'c.FirstName', 'c.LastName', 'c.DateOfBirdth')
+                ->get()
+                ->map(function ($c) {
+                    return [
+                        'guid' => $c->guid,
+                        'firstName' => $c->FirstName,
+                        'lastName' => $c->LastName,
+                        'birthYear' => $c->DateOfBirdth ? (int) substr((string) $c->DateOfBirdth, 0, 4) : null,
+                    ];
+                })->toArray();
+
             $results[] = [
                 'guid'                => $u->guid,
                 'firstName'           => $u->FirstName,
@@ -292,6 +312,7 @@ class UsersRelationsController extends Controller
                 'maskedPhone'         => $mode['mode'] === 'sms' ? $this->maskPhone($mode['recipient']->Phone) : null,
                 'guardianFirstName'   => $mode['mode'] === 'guardian_sms' ? $mode['recipient']->FirstName : null,
                 'guardianMaskedPhone' => $mode['mode'] === 'guardian_sms' ? $this->maskPhone($mode['recipient']->Phone) : null,
+                'dependents'          => $dependents,
             ];
         }
 

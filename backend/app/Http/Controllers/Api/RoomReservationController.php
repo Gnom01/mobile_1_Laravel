@@ -175,7 +175,10 @@ class RoomReservationController extends Controller
      * GET /api/instructor/room-reservations/participants
      *
      * Wyszukiwarka osób do rezerwacji: po imieniu, nazwisku, telefonie
-     * lub e-mailu. Opcjonalnie zawężone do miasta.
+     * lub e-mailu. CELOWO bez zawężania do miasta/lokalizacji — instruktor
+     * może zapisać dowolną osobę z systemu. Do znalezionych osób dociągane
+     * są ich dzieci/podopieczni (usersrelations), więc podanie numeru
+     * rodzica pokazuje rodzica i jego dzieci.
      */
     public function participants(Request $request): JsonResponse
     {
@@ -185,47 +188,111 @@ class RoomReservationController extends Controller
 
         $request->validate([
             'search' => ['required', 'string', 'min:2', 'max:100'],
+            // przyjmowany dla zgodności, ale ignorowany (bez cięcia po mieście)
             'city'   => ['sometimes', 'nullable', 'string', 'max:50'],
         ]);
 
         $search = trim((string) $request->input('search'));
-        $city   = trim((string) $request->input('city', ''));
 
-        $query = DB::table('users')
+        $matches = DB::table('users')
             ->where('Cancelled', 0)
             ->where(function ($q) use ($search) {
                 $like = '%' . $search . '%';
                 $q->where('FirstName', 'like', $like)
                     ->orWhere('LastName', 'like', $like)
                     ->orWhere('fullName', 'like', $like)
-                    ->orWhereRaw('REPLACE(Phone, " ", "") like ?', ['%' . str_replace(' ', '', $search) . '%'])
                     ->orWhere('Email', 'like', $like);
-            });
 
-        if ($city !== '') {
-            // Osoba przypisana do miasta przez swoją domyślną lokalizację.
-            $query->whereIn('Default_LocalizationsID', function ($sub) use ($city) {
-                $sub->select('LocalizationsID')->from('localizations')->where('City', $city);
-            });
-        }
-
-        $people = $query
+                // Telefon: porównanie po samych cyfrach (spacje/myślniki/+
+                // usuwane po obu stronach), prefiks kraju 48 obcinany.
+                $digits = preg_replace('/\D+/', '', $search);
+                if (strlen($digits) >= 6) {
+                    if (str_starts_with($digits, '48') && strlen($digits) === 11) {
+                        $digits = substr($digits, 2);
+                    }
+                    $q->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(Phone, ' ', ''), '-', ''), '+', ''), '(', ''), ')', '') like ?",
+                        ['%' . $digits . '%']
+                    );
+                }
+            })
             ->orderBy('LastName')->orderBy('FirstName')
             ->limit(30)
             ->get(['UsersID', 'guid', 'FirstName', 'LastName', 'Phone', 'Email', 'DateOfBirdth']);
 
-        return response()->json([
-            'success' => true,
-            'participants' => $people->map(fn ($u) => [
-                'usersID'    => (int) $u->UsersID,
-                'guid'       => $u->guid,
-                'firstName'  => $u->FirstName,
-                'lastName'   => $u->LastName,
-                'maskedPhone' => $this->maskPhone($u->Phone),
-                'category'   => $this->ageCategory($u->DateOfBirdth),
-                'birthYear'  => $u->DateOfBirdth ? (int) substr((string) $u->DateOfBirdth, 0, 4) : null,
-            ])->values(),
-        ]);
+        // Dzieci/podopieczni znalezionych osób (często bez własnego telefonu).
+        $matchedIds = $matches->pluck('UsersID')->map(fn ($v) => (int) $v)->all();
+        $childrenByParent = collect();
+
+        if (!empty($matchedIds)) {
+            $relations = DB::table('usersrelations')
+                ->whereIn('Parent_UsersID', $matchedIds)
+                ->where('Cancelled', 0)
+                ->get(['Parent_UsersID', 'UsersID']);
+
+            $childIds = $relations->pluck('UsersID')
+                ->map(fn ($v) => (int) $v)
+                ->diff($matchedIds)
+                ->unique()
+                ->values();
+
+            if ($childIds->isNotEmpty()) {
+                $children = DB::table('users')
+                    ->whereIn('UsersID', $childIds->all())
+                    ->where('Cancelled', 0)
+                    ->get(['UsersID', 'guid', 'FirstName', 'LastName', 'Phone', 'Email', 'DateOfBirdth'])
+                    ->keyBy('UsersID');
+
+                $childrenByParent = $relations
+                    ->groupBy('Parent_UsersID')
+                    ->map(
+                        fn ($group) => $group
+                            ->map(fn ($r) => $children->get((int) $r->UsersID))
+                            ->filter()
+                            ->values()
+                    );
+            }
+        }
+
+        // Lista: osoba znaleziona, a zaraz pod nią jej podopieczni.
+        $out = [];
+        $seen = [];
+        foreach ($matches as $u) {
+            $uid = (int) $u->UsersID;
+            if (isset($seen[$uid])) {
+                continue;
+            }
+            $seen[$uid] = true;
+            $out[] = $this->presentParticipant($u);
+
+            foreach ($childrenByParent->get($uid) ?? [] as $child) {
+                $cid = (int) $child->UsersID;
+                if (isset($seen[$cid])) {
+                    continue;
+                }
+                $seen[$cid] = true;
+                $out[] = $this->presentParticipant(
+                    $child,
+                    trim(($u->FirstName ?? '') . ' ' . ($u->LastName ?? ''))
+                );
+            }
+        }
+
+        return response()->json(['success' => true, 'participants' => $out]);
+    }
+
+    private function presentParticipant(object $u, ?string $relationOf = null): array
+    {
+        return [
+            'usersID'     => (int) $u->UsersID,
+            'guid'        => $u->guid,
+            'firstName'   => $u->FirstName,
+            'lastName'    => $u->LastName,
+            'maskedPhone' => $this->maskPhone($u->Phone),
+            'category'    => $this->ageCategory($u->DateOfBirdth),
+            'birthYear'   => $u->DateOfBirdth ? (int) substr((string) $u->DateOfBirdth, 0, 4) : null,
+            'relationOf'  => $relationOf,
+        ];
     }
 
     /**
