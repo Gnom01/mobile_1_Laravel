@@ -329,13 +329,19 @@ class RoomReservationController extends Controller
             ], 503);
         }
 
-        $products = $rows->map(fn ($r) => [
+        $allowedDvids = [15, 16, 17, 18, 19];
+
+        $products = $rows->filter(function ($r) use ($allowedDvids) {
+            $dvid = (int) ($r['productsLevel3DVID'] ?? 0);
+            return in_array($dvid, $allowedDvids, true);
+        })->map(fn ($r) => [
             'productsID'   => (int) ($r['productsID'] ?? 0),
             'productName'  => (string) ($r['productName'] ?? ''),
             'price'        => (float) ($r['price'] ?? 0),
             'numberOfLessons' => (int) ($r['numberOfLessons'] ?? 0),
             'classTypeName' => (string) ($r['classTypeName'] ?? ''),
             'instructorName' => trim((string) ($r['instructorsName'] ?? '')),
+            'productsLevel3DVID' => (int) ($r['productsLevel3DVID'] ?? 0),
         ])->filter(fn ($p) => $p['productsID'] > 0)->unique('productsID')->values();
 
         return response()->json(['success' => true, 'products' => $products]);
