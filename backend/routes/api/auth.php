@@ -36,4 +36,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::match(['get', 'post'], '/user/terms-acceptance', [AuthController::class, 'termsAcceptance']);
     Route::post('/account/delete/request', [AccountDeletionController::class, 'request']);
     Route::post('/account/delete/confirm', [AccountDeletionController::class, 'confirm']);
+    Route::get('/legal/service-provider', [\App\Http\Controllers\Api\LegalInfoController::class, 'serviceProvider']);
 });
