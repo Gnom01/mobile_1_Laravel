@@ -51,14 +51,14 @@ jobs:
               DB_PASS=$(openssl rand -hex 16)
               DB_ROOT_PASS=$(openssl rand -hex 20)
               cat > .env <<EOF
-COMPOSE_PROJECT_NAME=edsdev
-APP_HTTP_PORT=8081
-DB_HOST_PORT=3308
-MYSQL_DATABASE=app_dev
-MYSQL_USER=app
-MYSQL_PASSWORD=$DB_PASS
-MYSQL_ROOT_PASSWORD=$DB_ROOT_PASS
-EOF
+            COMPOSE_PROJECT_NAME=edsdev
+            APP_HTTP_PORT=8081
+            DB_HOST_PORT=3308
+            MYSQL_DATABASE=app_dev
+            MYSQL_USER=app
+            MYSQL_PASSWORD=$DB_PASS
+            MYSQL_ROOT_PASSWORD=$DB_ROOT_PASS
+            EOF
             fi
 
             if [ ! -f .env.docker ]; then
