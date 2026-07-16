@@ -32,4 +32,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/password/set', [OtpController::class, 'setPassword']);
     Route::match(['get', 'post', 'put'], '/user/profile', [AuthController::class, 'profile']);
     Route::match(['get', 'post', 'put'], '/user/consents', [AuthController::class, 'consents']);
+    Route::match(['get', 'post'], '/user/terms-acceptance', [AuthController::class, 'termsAcceptance']);
 });

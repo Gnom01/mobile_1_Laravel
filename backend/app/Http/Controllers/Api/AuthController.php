@@ -190,7 +190,10 @@ class AuthController
             'activationDate'                => null,
             'paymentMethodsDVID'            => 0,
             'paymentMethodsName'            => '',
-            'personalDataProcessingConsent' => $request->input('PersonalDataProcessingConsent', false) ? 1 : 0,
+            // Rejestracja w aplikacji wymaga prowadzenia Konta — przetwarzanie
+            // danych na podstawie umowy (art. 6 ust. 1 lit. b RODO); flaga CRM
+            // odzwierciedla ten stan. Zgody opcjonalne pozostają domyślnie 0.
+            'personalDataProcessingConsent' => $request->input('PersonalDataProcessingConsent', true) ? 1 : 0,
             'consentReceiveSmsEmailPhone'   => $request->input('consentReceiveSmsEmailPhone', false) ? 1 : 0,
             'marketingAgreement'            => $request->input('marketingAgreement', false) ? 1 : 0,
             'fileName'                      => '',
@@ -349,6 +352,46 @@ class AuthController
                 'GenderDVID' => $user->GenderDVID,
                 'address' => $user->address,
             ],
+        ]);
+    }
+
+    /**
+     * Akceptacja Regulaminu aplikacji: GET zwraca ostatnią akceptację,
+     * POST utrwala wersję, datę i sposób akceptacji (§ 5 ust. 4 Regulaminu).
+     */
+    public function termsAcceptance(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$request->isMethod('get')) {
+            $validated = $request->validate([
+                'document_version' => 'required|string|max:64',
+                'method'           => 'required|string|max:32',
+            ]);
+
+            \App\Models\TermsAcceptance::firstOrCreate(
+                [
+                    'UsersID'          => $user->UsersID,
+                    'document_version' => $validated['document_version'],
+                ],
+                [
+                    'method'      => $validated['method'],
+                    'accepted_at' => now(),
+                ],
+            );
+        }
+
+        $latest = \App\Models\TermsAcceptance::where('UsersID', $user->UsersID)
+            ->orderByDesc('accepted_at')
+            ->first();
+
+        return response()->json([
+            'success' => true,
+            'acceptance' => $latest ? [
+                'documentVersion' => $latest->document_version,
+                'method'          => $latest->method,
+                'acceptedAt'      => $latest->accepted_at->toIso8601String(),
+            ] : null,
         ]);
     }
 
