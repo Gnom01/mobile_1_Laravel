@@ -81,6 +81,16 @@ class AuthController
             'guid' => $user->guid,
         ]);
 
+        // Konto z potwierdzonym żądaniem usunięcia — logowanie zablokowane
+        // (część V pkt 2.2 dokumentu prawnego).
+        if (\App\Models\AccountDeletionRequest::isBlocked((int) $user->UsersID)) {
+            return response()->json([
+                'success' => false,
+                'error'   => 'ACCOUNT_DELETION_REQUESTED',
+                'message' => 'Dla tego konta zgłoszono usunięcie. Aby je przywrócić, skontaktuj się: studio@egurrola.com.',
+            ], 403);
+        }
+
         // Usuń poprzednie tokeny (opcjonalnie)
         $user->tokens()->delete();
 

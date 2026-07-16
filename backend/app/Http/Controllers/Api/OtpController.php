@@ -144,6 +144,15 @@ class OtpController
             ], 404);
         }
 
+        // Konto z potwierdzonym żądaniem usunięcia — logowanie zablokowane.
+        if (\App\Models\AccountDeletionRequest::isBlocked((int) $user->UsersID)) {
+            return response()->json([
+                'ok'      => false,
+                'error'   => 'ACCOUNT_DELETION_REQUESTED',
+                'message' => 'Dla tego konta zgłoszono usunięcie. Aby je przywrócić, skontaktuj się: studio@egurrola.com.',
+            ], 403);
+        }
+
         // Invalidate OTP (one-time use)
         $otp->update(['expires_at' => now()]);
 
@@ -454,6 +463,15 @@ class OtpController
 
             $relationship             = 'family';
             $participantRelationsDVID = (int) $relation->ParticipantRelationsDVID;
+        }
+
+        // Konto z potwierdzonym żądaniem usunięcia — logowanie zablokowane.
+        if (\App\Models\AccountDeletionRequest::isBlocked((int) $selectedUser->UsersID)) {
+            return response()->json([
+                'ok'      => false,
+                'error'   => 'ACCOUNT_DELETION_REQUESTED',
+                'message' => 'Dla tego konta zgłoszono usunięcie. Aby je przywrócić, skontaktuj się: studio@egurrola.com.',
+            ], 403);
         }
 
         // Invalidate OTP (one-time use)

@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\AccountDeletionController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\OtpController;
 use App\Http\Controllers\Api\PasswordResetController;
@@ -33,4 +34,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::match(['get', 'post', 'put'], '/user/profile', [AuthController::class, 'profile']);
     Route::match(['get', 'post', 'put'], '/user/consents', [AuthController::class, 'consents']);
     Route::match(['get', 'post'], '/user/terms-acceptance', [AuthController::class, 'termsAcceptance']);
+    Route::post('/account/delete/request', [AccountDeletionController::class, 'request']);
+    Route::post('/account/delete/confirm', [AccountDeletionController::class, 'confirm']);
 });
