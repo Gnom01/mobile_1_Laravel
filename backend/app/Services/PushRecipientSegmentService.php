@@ -34,7 +34,53 @@ class PushRecipientSegmentService
         }
 
         if (($filters['marketing_consent'] ?? null) !== null) {
-            $query->where('u.marketingAgreement', (int) (bool) $filters['marketing_consent']);
+            $wantsConsent = (bool) $filters['marketing_consent'];
+
+            // Marketing push wymaga zgody na kanał push (consent_channels
+            // marketing_push). Użytkownicy sprzed migracji na zgody granularne
+            // (brak wpisów w consent_channels) są oceniani po zbiorczej
+            // fladze CRM marketingAgreement, którą obejmowała dawna zgoda.
+            $pushChannelConsent = function ($q) {
+                $q->selectRaw('1')
+                    ->from('consent_channels as cc')
+                    ->whereColumn('cc.UsersID', 'u.UsersID')
+                    ->where('cc.consent_key', 'marketing_push')
+                    ->where('cc.granted', 1);
+            };
+            $hasAnyChannelRow = function ($q) {
+                $q->selectRaw('1')
+                    ->from('consent_channels as cc')
+                    ->whereColumn('cc.UsersID', 'u.UsersID');
+            };
+
+            if ($wantsConsent) {
+                $query->where(function ($q) use ($pushChannelConsent, $hasAnyChannelRow) {
+                    $q->whereExists($pushChannelConsent)
+                        ->orWhere(function ($legacy) use ($hasAnyChannelRow) {
+                            $legacy->where('u.marketingAgreement', 1)
+                                ->whereNotExists($hasAnyChannelRow);
+                        });
+                });
+            } else {
+                $query->where(function ($q) use ($pushChannelConsent, $hasAnyChannelRow) {
+                    $q->whereNotExists($pushChannelConsent)
+                        ->where(function ($legacy) use ($hasAnyChannelRow) {
+                            $legacy->where('u.marketingAgreement', 0)
+                                ->orWhereExists($hasAnyChannelRow);
+                        });
+                });
+            }
+        }
+
+        if (!empty($filters['exclude_minors'])) {
+            // Wykluczamy użytkowników ze znaną datą urodzenia wskazującą
+            // wiek < 18 lat. Puste/zerowe daty to konta zakładane przez
+            // dorosłych posiadaczy (rejestracja wymaga pełnoletności).
+            $query->where(function ($q) {
+                $q->whereNull('u.DateOfBirdth')
+                    ->orWhere('u.DateOfBirdth', '0000-00-00')
+                    ->orWhereDate('u.DateOfBirdth', '<=', now()->subYears(18)->toDateString());
+            });
         }
 
         if (!empty($filters['birth_date_from'])) {

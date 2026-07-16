@@ -76,6 +76,9 @@ class CrmPushController extends Controller
 
             if (($data['category'] ?? null) === 'marketing') {
                 $filters['marketing_consent'] = true;
+                // Profile małoletnich nie otrzymują marketingu
+                // (Polityka prywatności §7.3).
+                $filters['exclude_minors'] = true;
                 $userIds = $data['recipients'] ?? $this->segments->userIds($filters);
             }
 

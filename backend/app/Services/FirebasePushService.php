@@ -124,6 +124,11 @@ class FirebasePushService
     private function payload(DeviceToken $deviceToken, PushNotification $notification): array
     {
         $unreadCount = $this->unreadCountForUser((int) $deviceToken->user_id);
+        // Marketing idzie osobnym kanałem Androida (rozdział powiadomień
+        // operacyjnych od marketingowych — § 18 Regulaminu aplikacji).
+        $androidChannel = $notification->category === 'marketing'
+            ? 'eds_marketing'
+            : 'eds_high_importance';
         $data = [
             'notification_id' => (string) $notification->id,
             'title' => $notification->title,
@@ -146,7 +151,7 @@ class FirebasePushService
                     'image' => $notification->image_url,
                     'sound' => 'default',
                     'badge' => (string) $unreadCount,
-                    'android_channel_id' => 'eds_high_importance',
+                    'android_channel_id' => $androidChannel,
                 ]),
                 'data' => $data,
             ];
@@ -164,7 +169,7 @@ class FirebasePushService
                 'android' => [
                     'priority' => $notification->priority === 'high' ? 'HIGH' : 'NORMAL',
                     'notification' => [
-                        'channel_id' => 'eds_high_importance',
+                        'channel_id' => $androidChannel,
                         'sound' => 'default',
                         'notification_count' => $unreadCount,
                     ],
