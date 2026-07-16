@@ -318,7 +318,18 @@ class RoomReservationController extends Controller
                 'localizationsIDList'     => [(int) $validated['localizationsID']],
                 'current_LocalizationsID' => (string) $validated['localizationsID'],
             ]);
-            $rows = collect($resp->json('body') ?: []);
+            $body = $resp->json('body');
+            if ($body === null) {
+                Log::warning('Room reservation products: CRM returned no body', [
+                    'status'   => $resp->status(),
+                    'response' => $resp->json(),
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'CRM nie zwrócił danych (brak pola body). Spróbuj ponownie.',
+                ], 503);
+            }
+            $rows = collect($body);
         } catch (\Exception $e) {
             Log::error('Room reservation products: CRM fetch failed', [
                 'error' => $e->getMessage(),
