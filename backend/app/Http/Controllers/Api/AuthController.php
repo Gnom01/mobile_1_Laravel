@@ -440,11 +440,15 @@ class AuthController
         // ── Zapis zgód (POST/PUT) ─────────────────────────────────────────────
         // Zgodę na przetwarzanie danych (wymaganą) zostawiamy bez zmian — nie da
         // się jej wyłączyć z aplikacji. Pozostałe są opcjonalne.
+        // Kanały granularne (część IV pkt 2-3 dokumentu prawnego) trafiają do
+        // consent_channels z datą zmiany; do CRM wypychany jest agregat.
         if (!$request->isMethod('get')) {
             $validated = $request->validate([
                 'consentReceiveSmsEmailPhone' => 'sometimes|boolean',
                 'marketingAgreement'          => 'sometimes|boolean',
                 'newsletter'                  => 'sometimes|boolean',
+                'channels'                    => 'sometimes|array',
+                'channels.*'                  => 'boolean',
             ]);
 
             if (array_key_exists('consentReceiveSmsEmailPhone', $validated)) {
@@ -456,6 +460,38 @@ class AuthController
             if (array_key_exists('newsletter', $validated)) {
                 $user->Newsletter = $validated['newsletter'] ? 1 : 0;
             }
+
+            if (!empty($validated['channels'])) {
+                foreach ($validated['channels'] as $key => $granted) {
+                    if (!in_array($key, \App\Models\ConsentChannel::KEYS, true)) {
+                        continue;
+                    }
+                    $channel = \App\Models\ConsentChannel::firstOrNew([
+                        'UsersID'     => $user->UsersID,
+                        'consent_key' => $key,
+                    ]);
+                    // Datę zmiany aktualizujemy tylko przy realnej zmianie stanu.
+                    if (!$channel->exists || $channel->granted !== (bool) $granted) {
+                        $channel->granted = (bool) $granted;
+                        $channel->changed_at = now();
+                        $channel->save();
+                    }
+                }
+
+                // Agregaty do CRM (źródło prawdy zna tylko flagi zbiorcze):
+                // marketingAgreement = którykolwiek kanał marketingowy,
+                // Newsletter = kanał e-mail.
+                $channels = \App\Models\ConsentChannel::where('UsersID', $user->UsersID)
+                    ->pluck('granted', 'consent_key');
+                $anyMarketing = $channels->only([
+                    'marketing_email', 'marketing_sms', 'marketing_phone', 'marketing_push',
+                ])->contains(true);
+                $user->marketingAgreement = $anyMarketing ? 1 : 0;
+                if ($channels->has('marketing_email')) {
+                    $user->Newsletter = $channels['marketing_email'] ? 1 : 0;
+                }
+            }
+
             $user->save();
 
             // Push do CRM (źródło prawdy) — inaczej najbliższy sync nadpisałby zmianę.
@@ -475,6 +511,40 @@ class AuthController
             }
         }
 
+        $channelRows = \App\Models\ConsentChannel::where('UsersID', $user->UsersID)->get();
+
+        // Jednorazowa materializacja stanu z flag zbiorczych CRM: użytkownik,
+        // który wyraził wcześniej ogólną zgodę marketingową, zachowuje ją
+        // w kanałach, które ta zgoda obejmowała. Push i profilowanie są nowe
+        // i wymagają odrębnego opt-in.
+        if ($channelRows->isEmpty() && ($user->marketingAgreement || $user->Newsletter)) {
+            $seed = [
+                'marketing_email' => (bool) ($user->Newsletter || $user->marketingAgreement),
+                'marketing_sms'   => (bool) ($user->marketingAgreement && $user->consentReceiveSmsEmailPhone),
+                'marketing_phone' => (bool) ($user->marketingAgreement && $user->consentReceiveSmsEmailPhone),
+                'marketing_push'  => false,
+                'profiling'       => false,
+            ];
+            foreach ($seed as $key => $granted) {
+                \App\Models\ConsentChannel::create([
+                    'UsersID'     => $user->UsersID,
+                    'consent_key' => $key,
+                    'granted'     => $granted,
+                    'changed_at'  => now(),
+                ]);
+            }
+            $channelRows = \App\Models\ConsentChannel::where('UsersID', $user->UsersID)->get();
+        }
+
+        $channelsOut = [];
+        foreach (\App\Models\ConsentChannel::KEYS as $key) {
+            $row = $channelRows->firstWhere('consent_key', $key);
+            $channelsOut[$key] = [
+                'granted'   => $row ? (bool) $row->granted : false,
+                'changedAt' => $row ? $row->changed_at->toIso8601String() : null,
+            ];
+        }
+
         return response()->json([
             'success' => true,
             'consents' => [
@@ -482,6 +552,7 @@ class AuthController
                 'consentReceiveSmsEmailPhone'   => (bool) $user->consentReceiveSmsEmailPhone,
                 'marketingAgreement'            => (bool) $user->marketingAgreement,
                 'newsletter'                    => (bool) $user->Newsletter,
+                'channels'                      => $channelsOut,
             ],
         ]);
     }
