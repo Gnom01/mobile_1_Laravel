@@ -21,7 +21,8 @@ class AuthController
         // Świeże kursy zaraz po logowaniu — ale ASYNCHRONICZNIE (kontener queue).
         // dispatchSync() wykonywałby pełny pull CRM w requeście logowania
         // (18+ s na prod, a ubity request nie zwalnia locka syncu).
-       //  \App\Jobs\PullCoursesJob::dispatch();
+        // \App\Jobs\PullClassRoomsJob::dispatch();
+         // \App\Jobs\PullClassRoomsJob::dispatchSync();
 
         $request->validate([
             'Email' => 'required|email',
